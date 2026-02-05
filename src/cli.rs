@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "bn",
-    about = "A hierarchical task engine where every task is a YAML file",
+    about = "Task tracker for coding agents",
     version
 )]
 pub struct Cli {
@@ -77,9 +77,17 @@ pub enum Command {
         #[arg(long)]
         requires: Option<String>,
 
-        /// Require verify to fail first (enforced TDD - proves test is real)
-        #[arg(long)]
-        fail_first: bool,
+        /// Skip fail-first check (allow verify to already pass)
+        #[arg(long, short = 'p')]
+        pass_ok: bool,
+
+        /// Claim the bean immediately (sets status to in_progress)
+        #[arg(long, conflicts_with = "run")]
+        claim: bool,
+
+        /// Who is claiming (requires --claim)
+        #[arg(long, requires = "claim")]
+        by: Option<String>,
 
         /// Spawn an agent to work on this bean (requires --verify)
         #[arg(long)]
@@ -156,8 +164,8 @@ pub enum Command {
         #[arg(long)]
         acceptance: Option<String>,
 
-        /// New/appended notes
-        #[arg(long)]
+        /// Append a note (with timestamp separator)
+        #[arg(long, visible_alias = "note")]
         notes: Option<String>,
 
         /// New design notes
@@ -266,6 +274,13 @@ pub enum Command {
     /// Force rebuild index from YAML files
     Sync,
 
+    /// Archive closed beans, release stale in-progress beans, and rebuild the index
+    Tidy {
+        /// Show what would happen without changing any files
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Project statistics
     Stats,
 
@@ -345,9 +360,9 @@ pub enum Command {
         #[arg(long)]
         requires: Option<String>,
 
-        /// Require verify to fail first (enforced TDD - proves test is real)
-        #[arg(long)]
-        fail_first: bool,
+        /// Skip fail-first check (allow verify to already pass)
+        #[arg(long, short = 'p')]
+        pass_ok: bool,
     },
 
     /// Adopt existing beans as children of a parent

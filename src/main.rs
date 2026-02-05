@@ -10,8 +10,8 @@ use bn::commands::{
     cmd_adopt, cmd_claim, cmd_close, cmd_config_get, cmd_config_set, cmd_context, cmd_create,
     cmd_delete, cmd_dep_add, cmd_dep_cycles, cmd_dep_list, cmd_dep_remove, cmd_dep_tree, cmd_doctor,
     cmd_edit, cmd_graph, cmd_init, cmd_list, cmd_quick, cmd_ready, cmd_blocked, cmd_release,
-    cmd_reopen, cmd_resolve, cmd_show, cmd_stats, cmd_status, cmd_sync, cmd_tree, cmd_trust,
-    cmd_unarchive, cmd_update, cmd_verify,
+    cmd_reopen, cmd_resolve, cmd_show, cmd_stats, cmd_status, cmd_sync, cmd_tidy, cmd_tree,
+    cmd_trust, cmd_unarchive, cmd_update, cmd_verify,
 };
 use bn::commands::create::CreateArgs;
 use bn::commands::quick::QuickArgs;
@@ -79,7 +79,9 @@ fn main() -> Result<()> {
             deps,
             produces,
             requires,
-            fail_first,
+            pass_ok,
+            claim,
+            by,
             run,
         } => {
             let title = title
@@ -95,7 +97,7 @@ fn main() -> Result<()> {
                 );
             }
 
-            cmd_create(&beans_dir, CreateArgs {
+            let bean_id = cmd_create(&beans_dir, CreateArgs {
                 title,
                 description,
                 acceptance,
@@ -109,8 +111,25 @@ fn main() -> Result<()> {
                 parent,
                 produces,
                 requires,
-                fail_first,
-            })
+                pass_ok,
+                claim,
+                by,
+            })?;
+
+            // --run: spawn a deli agent for the new bean
+            if run {
+                println!("Spawning agent via deli...");
+                let status = std::process::Command::new("deli")
+                    .args(["spawn", &bean_id])
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => eprintln!("deli spawn exited with code {}", s.code().unwrap_or(-1)),
+                    Err(e) => eprintln!("Failed to run deli spawn: {}", e),
+                }
+            }
+
+            Ok(())
         }
 
         Command::Show { id, json, short } => {
@@ -240,6 +259,7 @@ fn main() -> Result<()> {
         }
         Command::Graph { format } => cmd_graph(&beans_dir, &format),
         Command::Sync => cmd_sync(&beans_dir),
+        Command::Tidy { dry_run } => cmd_tidy(&beans_dir, dry_run),
         Command::Stats => cmd_stats(&beans_dir),
         Command::Doctor { fix } => cmd_doctor(&beans_dir, fix),
         Command::Trust { revoke, check } => cmd_trust(&beans_dir, revoke, check),
@@ -250,7 +270,7 @@ fn main() -> Result<()> {
             cmd_unarchive(&beans_dir, &resolved_id)
         }
 
-        Command::Quick { title, description, acceptance, notes, verify, priority, by, produces, requires, fail_first } => {
+        Command::Quick { title, description, acceptance, notes, verify, priority, by, produces, requires, pass_ok } => {
             cmd_quick(&beans_dir, QuickArgs {
                 title,
                 description,
@@ -261,7 +281,7 @@ fn main() -> Result<()> {
                 by,
                 produces,
                 requires,
-                fail_first,
+                pass_ok,
             })
         }
 
