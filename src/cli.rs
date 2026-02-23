@@ -30,13 +30,21 @@ Commands:
     blocked      Show beans blocked by unresolved dependencies
     tree         Show hierarchical tree of beans
     graph        Display dependency graph
-    context      Output context for a bean (files referenced in description)
+    context      Output context for a bean, or memory context (no args)
+
+  MEMORY
+    fact         Create a verified fact (requires --verify)
+    recall       Search beans by keyword
+    verify-facts Re-verify all facts, detect staleness
 
   AGENTS
     run          Dispatch ready beans to agents
     plan         Interactively plan a large bean into children
     agents       Show running and recently completed agents
     logs         View agent output from log files
+
+  MCP
+    mcp          MCP server for IDE integration (Cursor, Windsurf, Claude Desktop)
 
   DEPENDENCIES
     dep          Manage dependencies between beans
@@ -368,11 +376,12 @@ pub enum Command {
         json: bool,
     },
 
-    /// Output context for a bean (files referenced in description)
+    /// Output context for a bean (files referenced in description).
+    /// Without an ID, outputs memory context (stale facts, working on, recent work).
     #[command(display_order = 25)]
     Context {
-        /// Bean ID
-        id: String,
+        /// Bean ID (omit for memory context)
+        id: Option<String>,
 
         /// Output as JSON (file paths and contents)
         #[arg(long)]
@@ -620,12 +629,67 @@ pub enum Command {
     },
 
     // -- AGENTS --
-    /// Manage project configuration (set run/plan templates)
+    /// Manage project configuration
     #[command(display_order = 35)]
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+
+    // -- MCP --
+    /// MCP server for IDE integration (Cursor, Windsurf, Claude Desktop, Cline)
+    #[command(display_order = 60)]
+    Mcp {
+        #[command(subcommand)]
+        command: McpCommand,
+    },
+
+    // -- MEMORY --
+    /// Create a verified fact (requires --verify)
+    #[command(display_order = 50)]
+    Fact {
+        /// Fact title (what is true)
+        title: String,
+
+        /// Shell command that verifies this fact (required)
+        #[arg(long)]
+        verify: String,
+
+        /// Description / additional context
+        #[arg(long)]
+        description: Option<String>,
+
+        /// Comma-separated file paths this fact is relevant to
+        #[arg(long)]
+        paths: Option<String>,
+
+        /// Time-to-live in days before fact becomes stale (default: 30)
+        #[arg(long)]
+        ttl: Option<i64>,
+
+        /// Skip fail-first check
+        #[arg(long, short = 'p')]
+        pass_ok: bool,
+    },
+
+    /// Search beans by keyword
+    #[command(display_order = 51)]
+    Recall {
+        /// Search query
+        query: String,
+
+        /// Include closed/archived beans
+        #[arg(long)]
+        all: bool,
+
+        /// JSON output
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Re-verify all facts, detect staleness
+    #[command(display_order = 52, name = "verify-facts")]
+    VerifyFacts,
 }
 
 #[derive(Subcommand)]
@@ -668,16 +732,22 @@ pub enum DepCommand {
 pub enum ConfigCommand {
     /// Get a configuration value
     Get {
-        /// Config key (e.g., max_tokens, auto_close_parent)
+        /// Config key (run, plan, max_tokens, max_concurrent, poll_interval, auto_close_parent, max_loops)
         key: String,
     },
 
     /// Set a configuration value
     Set {
-        /// Config key (e.g., max_tokens, auto_close_parent)
+        /// Config key (run, plan, max_tokens, max_concurrent, poll_interval, auto_close_parent, max_loops)
         key: String,
 
         /// New value
         value: String,
     },
+}
+
+#[derive(Subcommand)]
+pub enum McpCommand {
+    /// Start MCP server on stdio (JSON-RPC 2.0)
+    Serve,
 }

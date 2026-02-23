@@ -17,6 +17,7 @@ pub fn cmd_config_get(beans_dir: &Path, key: &str) -> Result<()> {
         "plan" => config.plan.unwrap_or_default(),
         "max_concurrent" => config.max_concurrent.to_string(),
         "poll_interval" => config.poll_interval.to_string(),
+        "rules_file" => config.rules_file.unwrap_or_else(|| "RULES.md".to_string()),
         _ => return Err(anyhow!("Unknown config key: {}", key)),
     };
 
@@ -82,6 +83,13 @@ pub fn cmd_config_set(beans_dir: &Path, key: &str, value: &str) -> Result<()> {
                     value
                 )
             })?;
+        }
+        "rules_file" => {
+            if value.is_empty() || value == "none" || value == "unset" {
+                config.rules_file = None;
+            } else {
+                config.rules_file = Some(value.to_string());
+            }
         }
         _ => return Err(anyhow!("Unknown config key: {}", key)),
     }

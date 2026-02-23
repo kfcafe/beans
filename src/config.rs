@@ -37,6 +37,10 @@ pub struct Config {
     /// Supports `~/` for home directory. Paths are relative to the project root.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extends: Vec<String>,
+    /// Path to project rules file, relative to .beans/ directory (default: "RULES.md").
+    /// Contents are injected into every `bn context` output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules_file: Option<String>,
 }
 
 fn default_auto_close_parent() -> bool {
@@ -135,6 +139,9 @@ impl Config {
             if config.auto_close_parent == default_auto_close_parent() {
                 config.auto_close_parent = parent.auto_close_parent;
             }
+            if config.rules_file.is_none() {
+                config.rules_file = parent.rules_file.clone();
+            }
             // Never inherit: project, next_id, extends
         }
 
@@ -161,6 +168,23 @@ impl Config {
         fs::write(&path, &contents)
             .with_context(|| format!("Failed to write config at {}", path.display()))?;
         Ok(())
+    }
+
+    /// Return the path to the project rules file.
+    /// Defaults to `.beans/RULES.md` if `rules_file` is not set.
+    /// The path is resolved relative to the beans directory.
+    pub fn rules_path(&self, beans_dir: &Path) -> PathBuf {
+        match &self.rules_file {
+            Some(custom) => {
+                let p = Path::new(custom);
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    beans_dir.join(custom)
+                }
+            }
+            None => beans_dir.join("RULES.md"),
+        }
     }
 
     /// Return the current next_id and increment it for the next call.
@@ -190,6 +214,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
 
         config.save(dir.path()).unwrap();
@@ -211,6 +236,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
 
         assert_eq!(config.increment_id(), 1);
@@ -248,6 +274,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -284,6 +311,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -319,6 +347,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -353,6 +382,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -377,6 +407,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -411,6 +442,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -622,6 +654,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -671,6 +704,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -692,6 +726,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -726,6 +761,7 @@ mod tests {
             max_concurrent: 8,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -760,6 +796,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 60,
             extends: vec![],
+            rules_file: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -859,6 +896,7 @@ mod tests {
             max_concurrent: 8,
             poll_interval: 60,
             extends: vec![],
+            rules_file: None,
         };
 
         config.save(dir.path()).unwrap();

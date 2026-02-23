@@ -13,15 +13,17 @@ use bn::commands::quick::QuickArgs;
 use bn::commands::{
     cmd_adopt, cmd_agents, cmd_blocked, cmd_claim, cmd_close, cmd_config_get, cmd_config_set,
     cmd_context, cmd_create, cmd_delete, cmd_dep_add, cmd_dep_cycles, cmd_dep_list, cmd_dep_remove,
-    cmd_dep_tree, cmd_doctor, cmd_edit, cmd_graph, cmd_init, cmd_list, cmd_logs, cmd_plan,
-    cmd_quick, cmd_ready, cmd_release, cmd_reopen, cmd_resolve, cmd_run, cmd_show, cmd_stats,
-    cmd_status, cmd_sync, cmd_tidy, cmd_tree, cmd_trust, cmd_unarchive, cmd_update, cmd_verify,
+    cmd_dep_tree, cmd_doctor, cmd_edit, cmd_fact, cmd_graph, cmd_init, cmd_list, cmd_logs,
+    cmd_memory_context, cmd_plan, cmd_quick, cmd_ready, cmd_recall, cmd_release, cmd_reopen,
+    cmd_resolve, cmd_run, cmd_show, cmd_stats, cmd_status, cmd_sync, cmd_tidy, cmd_tree,
+    cmd_trust, cmd_unarchive, cmd_update, cmd_verify, cmd_verify_facts,
+    cmd_mcp_serve,
 };
 use bn::discovery::find_beans_dir;
 use bn::index::Index;
 use bn::selector::{resolve_selector_string, SelectionContext};
 use bn::util::validate_bean_id;
-use cli::{Cli, Command, ConfigCommand, DepCommand};
+use cli::{Cli, Command, ConfigCommand, DepCommand, McpCommand};
 
 // Helper to resolve a single bean ID (handles selectors)
 fn resolve_bean_id(id: &str, beans_dir: &std::path::Path) -> Result<String> {
@@ -218,11 +220,12 @@ fn main() -> Result<()> {
                     }
                     None => {
                         anyhow::bail!(
-                            "--run requires a configured run command.\n\n\
-                             Set it with: bn config set run \"<command>\"\n\n\
+                            "--run requires a configured agent.\n\n\
+                             Run: bn init --setup\n\n\
+                             Or set manually: bn config set run \"<command>\"\n\n\
                              The command template uses {{id}} as a placeholder for the bean ID.\n\n\
                              Examples:\n  \
-                               bn config set run \"deli spawn {{id}}\"\n  \
+                               bn config set run \"pi @.beans/{{id}}-*.md 'implement and bn close {{id}}'\"\n  \
                                bn config set run \"claude -p 'implement bean {{id}} and run bn close {{id}}'\""
                         );
                     }
@@ -403,9 +406,17 @@ fn main() -> Result<()> {
         Command::Status { json } => cmd_status(json, &beans_dir),
 
         Command::Context { id, json } => {
-            validate_bean_id(&id)?;
-            let resolved_id = resolve_bean_id(&id, &beans_dir)?;
-            cmd_context(&beans_dir, &resolved_id, json)
+            match id {
+                Some(ref id_str) => {
+                    validate_bean_id(id_str)?;
+                    let resolved_id = resolve_bean_id(id_str, &beans_dir)?;
+                    cmd_context(&beans_dir, &resolved_id, json)
+                }
+                None => {
+                    // No ID: output memory context
+                    cmd_memory_context(&beans_dir, json)
+                }
+            }
         }
 
         Command::Tree { id } => {
@@ -548,9 +559,29 @@ fn main() -> Result<()> {
             cmd_logs(&beans_dir, &resolved_id, follow, all)
         }
 
+        Command::Fact {
+            title,
+            verify,
+            description,
+            paths,
+            ttl,
+            pass_ok,
+        } => {
+            cmd_fact(&beans_dir, title, verify, description, paths, ttl, pass_ok)?;
+            Ok(())
+        }
+
+        Command::Recall { query, all, json } => cmd_recall(&beans_dir, &query, all, json),
+
+        Command::VerifyFacts => cmd_verify_facts(&beans_dir),
+
         Command::Config { command } => match command {
             ConfigCommand::Get { key } => cmd_config_get(&beans_dir, &key),
             ConfigCommand::Set { key, value } => cmd_config_set(&beans_dir, &key, &value),
+        },
+
+        Command::Mcp { command } => match command {
+            McpCommand::Serve => cmd_mcp_serve(&beans_dir),
         },
     }
 }

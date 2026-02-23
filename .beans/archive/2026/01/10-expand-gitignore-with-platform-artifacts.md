@@ -1,18 +1,16 @@
 ---
-id: 10
+id: '10'
 title: Expand .gitignore with platform artifacts
 status: closed
 priority: 2
-created_at: |-
-  2026-01-30T18:41:57.884273Z
-updated_at: |-
-  2026-01-30T18:51:07.517469Z
+created_at: 2026-01-30T18:41:57.884273Z
+updated_at: 2026-01-30T18:51:07.517469Z
 labels:
-  - hygiene
-  - meta
-closed_at: |-
-  2026-01-30T18:51:07.517469Z
+- hygiene
+- meta
+closed_at: 2026-01-30T18:51:07.517469Z
 verify: git status --porcelain | wc -l
+is_archived: true
 ---
 
 Clean up .gitignore to exclude platform-specific files and editor artifacts.

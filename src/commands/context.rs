@@ -3,13 +3,52 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use crate::bean::Bean;
+use crate::config::Config;
 use crate::ctx_assembler::{assemble_context, extract_paths};
 use crate::discovery::find_bean_file;
+
+/// Load project rules from the configured rules file.
+///
+/// Returns `None` if the file doesn't exist or is empty.
+/// Warns to stderr if the file is very large (>1000 lines).
+fn load_rules(beans_dir: &Path) -> Option<String> {
+    let config = Config::load(beans_dir).ok()?;
+    let rules_path = config.rules_path(beans_dir);
+
+    let content = std::fs::read_to_string(&rules_path).ok()?;
+    let trimmed = content.trim();
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let line_count = content.lines().count();
+    if line_count > 1000 {
+        eprintln!(
+            "Warning: RULES.md is very large ({} lines). Consider trimming it.",
+            line_count
+        );
+    }
+
+    Some(content)
+}
+
+/// Format rules content with delimiters for agent context injection.
+fn format_rules_section(rules: &str) -> String {
+    format!(
+        "═══ PROJECT RULES ═══════════════════════════════════════════\n\
+         {}\n\
+         ═════════════════════════════════════════════════════════════\n\n",
+        rules.trim_end()
+    )
+}
 
 /// Assemble context for a bean from its description and referenced files.
 ///
 /// Extracts file paths mentioned in the bean's description and outputs
 /// the content of those files in a markdown format suitable for LLM prompts.
+/// If a `.beans/RULES.md` file exists, its contents are prepended as a
+/// "Project Rules" section before the bean-specific context.
 pub fn cmd_context(beans_dir: &Path, id: &str, json: bool) -> Result<()> {
     let bean_path =
         find_bean_file(beans_dir, id).context(format!("Could not find bean with ID: {}", id))?;
@@ -28,10 +67,21 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool) -> Result<()> {
     let description = bean.description.as_deref().unwrap_or("");
     let paths = extract_paths(description);
 
+    // Load project rules (silently skipped if missing/empty)
+    let rules = load_rules(beans_dir);
+
     if paths.is_empty() {
         if json {
-            println!("{}", serde_json::json!({"id": id, "files": []}));
+            let mut obj = serde_json::json!({"id": id, "files": []});
+            if let Some(ref rules_content) = rules {
+                obj["rules"] = serde_json::Value::String(rules_content.clone());
+            }
+            println!("{}", obj);
         } else {
+            // Still output rules even if no files referenced
+            if let Some(ref rules_content) = rules {
+                print!("{}", format_rules_section(rules_content));
+            }
             eprintln!("No file paths found in bean description.");
             eprintln!("Tip: Reference files in description with paths like 'src/foo.rs' or 'src/commands/bar.rs'");
         }
@@ -54,17 +104,29 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool) -> Result<()> {
                 "content": content,
             }));
         }
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+        let mut obj = serde_json::json!({
             "id": id,
             "files": files,
-        }))?);
+        });
+        if let Some(ref rules_content) = rules {
+            obj["rules"] = serde_json::Value::String(rules_content.clone());
+        }
+        println!("{}", serde_json::to_string_pretty(&obj)?);
     } else {
-        // Assemble the context from the extracted files
+        let mut output = String::new();
+
+        // Prepend project rules if available
+        if let Some(ref rules_content) = rules {
+            output.push_str(&format_rules_section(rules_content));
+        }
+
+        // Assemble the bean-specific context from referenced files
         let context =
             assemble_context(paths, project_dir).context("Failed to assemble context")?;
+        output.push_str(&context);
 
         // Output the assembled markdown to stdout
-        print!("{}", context);
+        print!("{}", output);
     }
 
     Ok(())

@@ -285,9 +285,42 @@ pub fn cmd_init(path: Option<&Path>, args: InitArgs) -> Result<()> {
         max_concurrent: 4,
         poll_interval: 30,
         extends: vec![],
+            rules_file: None,
     };
 
     config.save(&beans_dir)?;
+
+    // Create stub RULES.md if it doesn't exist
+    let rules_path = beans_dir.join("RULES.md");
+    if !rules_path.exists() {
+        fs::write(
+            &rules_path,
+            "\
+# Project Rules
+
+<!-- These rules are automatically injected into every agent context.
+     Define coding standards, conventions, and constraints here.
+     Delete these comments and add your own rules. -->
+
+<!-- Example rules:
+
+## Code Style
+- Use `snake_case` for functions and variables
+- Maximum line length: 100 characters
+- All public functions must have doc comments
+
+## Architecture
+- No direct database access outside the `db` module
+- All errors must use the `anyhow` crate
+
+## Forbidden Patterns
+- No `.unwrap()` in production code
+- No `println!` for logging (use `tracing` instead)
+-->
+",
+        )
+        .with_context(|| format!("Failed to create RULES.md at {}", rules_path.display()))?;
+    }
 
     if already_exists && args.setup {
         eprintln!("Reconfigured beans in .beans/");

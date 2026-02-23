@@ -10,6 +10,7 @@ use crate::discovery::{archive_path_for_bean, find_archived_bean, find_bean_file
 use crate::hooks::{execute_hook, HookEvent};
 use crate::index::Index;
 use crate::util::title_to_slug;
+use crate::worktree;
 
 #[cfg(test)]
 use std::fs;
@@ -517,6 +518,25 @@ pub fn cmd_close(
             }
         }
 
+        // Handle worktree merge (after verify passes, before archiving)
+        let worktree_info = worktree::detect_worktree()?;
+        if let Some(ref wt_info) = worktree_info {
+            // Commit any uncommitted changes
+            worktree::commit_worktree_changes(&format!("Close bean {}: {}", id, bean.title))?;
+
+            // Merge to main
+            match worktree::merge_to_main(wt_info, id)? {
+                worktree::MergeResult::Success | worktree::MergeResult::NothingToCommit => {
+                    // Continue to archive
+                }
+                worktree::MergeResult::Conflict { files } => {
+                    eprintln!("Merge conflict in files: {:?}", files);
+                    eprintln!("Resolve conflicts and run `bn close {}` again", id);
+                    return Ok(()); // Don't archive yet
+                }
+            }
+        }
+
         // Close the bean
         bean.status = crate::bean::Status::Closed;
         bean.closed_at = Some(now);
@@ -586,6 +606,13 @@ pub fn cmd_close(
                 OnCloseAction::Notify { message } => {
                     println!("[bean {}] {}", id, message);
                 }
+            }
+        }
+
+        // Clean up worktree after successful close
+        if let Some(ref wt_info) = worktree_info {
+            if let Err(e) = worktree::cleanup_worktree(wt_info) {
+                eprintln!("Warning: failed to clean up worktree: {}", e);
             }
         }
 
@@ -1371,6 +1398,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -1481,6 +1509,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -2439,6 +2468,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(&beans_dir).unwrap();
 

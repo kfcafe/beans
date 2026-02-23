@@ -169,10 +169,11 @@ Don't claim these — stay focused on your current work. Another agent handles t
 
 ## Delegating Work
 
-Use `bn run` to dispatch beans to agents. Configure the agent command once:
+Use `bn run` to dispatch beans to agents. Set up your agent first:
 
 ```bash
-bn config set run "claude -p 'implement bean {id} and run bn close {id}'"
+bn init --setup          # Interactive: detects pi, claude, aider on PATH
+bn init --agent pi       # Or pick directly
 ```
 
 Then dispatch:

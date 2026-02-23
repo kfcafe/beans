@@ -1,45 +1,9 @@
 beans:
-- id: '8'
-  title: Remove duplicate utility functions
-  status: closed
-  priority: 1
-  dependencies:
-  - '1'
-  - '2'
-  - '6'
-  labels:
-  - code-quality
-  - core
-  updated_at: 2026-01-30T18:52:17.686266Z
-  has_verify: true
-  attempts: 0
-- id: '9'
-  title: Extract beans_dir discovery pattern
-  status: closed
-  priority: 1
-  dependencies:
-  - '3'
-  labels:
-  - refactor
-  - code-quality
-  updated_at: 2026-01-30T18:46:30.023197Z
-  has_verify: true
-  attempts: 0
-- id: '10'
-  title: Expand .gitignore with platform artifacts
-  status: closed
-  priority: 2
-  labels:
-  - hygiene
-  - meta
-  updated_at: 2026-01-30T18:51:07.517469Z
-  has_verify: true
-  attempts: 0
 - id: '11'
   title: 'Verify-on-claim: run verify before granting claim'
-  status: in_progress
+  status: open
   priority: 2
-  updated_at: 2026-02-03T05:10:47.689160Z
+  updated_at: 2026-02-23T23:35:43.635274Z
   has_verify: true
   attempts: 0
 - id: '12'
@@ -53,10 +17,10 @@ beans:
   attempts: 0
 - id: '12.1'
   title: Implement git worktree isolation in spro spawn
-  status: in_progress
+  status: open
   priority: 2
   parent: '12'
-  updated_at: 2026-02-03T05:02:37.164217Z
+  updated_at: 2026-02-23T23:35:43.646391Z
   has_verify: true
   attempts: 0
 - id: '12.3'
@@ -79,18 +43,18 @@ beans:
   attempts: 0
 - id: 12.3.3.1
   title: Add worktree merge handling to cmd_close
-  status: in_progress
+  status: open
   priority: 1
   parent: 12.3.3
-  updated_at: 2026-02-04T02:02:11.238186Z
+  updated_at: 2026-02-23T23:35:43.653125Z
   has_verify: true
   attempts: 0
 - id: 12.3.3.2
   title: Add worktree merge integration tests for close
-  status: in_progress
+  status: open
   priority: 2
   parent: 12.3.3
-  updated_at: 2026-02-04T02:02:11.290420Z
+  updated_at: 2026-02-23T23:35:43.659561Z
   has_verify: true
   attempts: 0
 - id: '41'
@@ -100,10 +64,128 @@ beans:
   updated_at: 2026-02-05T18:47:19.828248Z
   has_verify: true
   attempts: 0
-- id: '66'
-  title: Integrate agent orchestration into beans
-  status: closed
-  priority: 1
-  updated_at: 2026-02-23T10:29:43.527101Z
+- id: '75'
+  title: 'Project rules: .beans/RULES.md convention'
+  status: open
+  priority: 2
+  updated_at: 2026-02-23T12:13:10.047614Z
+  has_verify: true
+  attempts: 0
+- id: '76'
+  title: 'MCP server: expose beans as MCP tools'
+  status: open
+  priority: 2
+  updated_at: 2026-02-23T12:13:30.494728Z
+  has_verify: true
+  attempts: 0
+- id: '77'
+  title: Post-close and on-fail hooks
+  status: open
+  priority: 2
+  updated_at: 2026-02-23T12:13:50.588573Z
+  has_verify: true
+  attempts: 0
+- id: '78'
+  title: Worktree isolation for parallel agents
+  status: open
+  priority: 2
+  updated_at: 2026-02-23T12:14:09.908279Z
+  has_verify: true
+  attempts: 0
+- id: '79'
+  title: Gitignore index.yaml — treat as local cache
+  status: open
+  priority: 2
+  updated_at: 2026-02-23T12:51:53.142977Z
+  has_verify: true
+  attempts: 0
+- id: '80'
+  title: 'Identity model: bn config set user'
+  status: open
+  priority: 2
+  updated_at: 2026-02-23T12:52:08.498902Z
+  has_verify: true
+  attempts: 0
+- id: '81'
+  title: Absorb deli into bn and simplify agent integration
+  status: open
+  priority: 2
+  updated_at: 2026-02-23T23:49:35.904758Z
+  has_verify: false
+  attempts: 0
+- id: '81.3'
+  title: Add timeout monitoring to bn
+  status: open
+  priority: 2
+  parent: '81'
+  updated_at: 2026-02-23T23:50:18.364972Z
+  produces:
+  - TimeoutConfig
+  - MonitorResult
+  - monitor_process
+  - timeout_module
+  has_verify: true
+  attempts: 0
+- id: '81.4'
+  title: Rewrite bn run to spawn pi directly with streaming and timeouts
+  status: open
+  priority: 2
+  parent: '81'
+  updated_at: 2026-02-23T23:50:45.959538Z
+  produces:
+  - bn_run_json_stream
+  - bn_run_direct_spawn
+  requires:
+  - StreamEvent
+  - AgentEvent
+  - TimeoutConfig
+  - monitor_process
+  has_verify: true
+  attempts: 0
+- id: '81.5'
+  title: Merge deli + beans pi extensions into unified beans extension
+  status: open
+  priority: 2
+  parent: '81'
+  updated_at: 2026-02-23T23:51:01.453157Z
+  requires:
+  - bn_run_json_stream
+  has_verify: true
+  attempts: 0
+- id: '81.6'
+  title: Bake decomposition wisdom into bn plan template
+  status: open
+  priority: 2
+  parent: '81'
+  updated_at: 2026-02-23T23:51:16.560629Z
+  requires:
+  - bn_run_direct_spawn
+  has_verify: true
+  attempts: 0
+- id: '81.7'
+  title: Simplify beans skill to minimal reference
+  status: open
+  priority: 2
+  parent: '81'
+  updated_at: 2026-02-23T23:51:28.782882Z
+  requires:
+  - bn_run_json_stream
+  - bn_run_direct_spawn
+  has_verify: true
+  attempts: 0
+- id: '82'
+  title: 'Fix broken tests: add missing fields to test Config and Bean constructors'
+  status: open
+  priority: 2
+  updated_at: 2026-02-23T23:51:37.885382Z
+  has_verify: true
+  attempts: 0
+- id: '83'
+  title: Add 'bn create next' subcommand for sequential bean chaining
+  status: open
+  priority: 2
+  dependencies:
+  - '82'
+  updated_at: 2026-02-23T23:52:07.358762Z
   has_verify: true
   attempts: 0

@@ -28,6 +28,7 @@ fn setup_test_env() -> (TempDir, std::path::PathBuf) {
         max_concurrent: 4,
         poll_interval: 30,
         extends: vec![],
+        rules_file: None,
     };
     config.save(&beans_dir).unwrap();
 

@@ -153,6 +153,34 @@ pub enum OnCloseAction {
 }
 
 // ---------------------------------------------------------------------------
+// AttemptRecord (for memory system attempt tracking)
+// ---------------------------------------------------------------------------
+
+/// Outcome of a claim→close cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptOutcome {
+    Success,
+    Failed,
+    Abandoned,
+}
+
+/// A single attempt record (claim→close cycle).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttemptRecord {
+    pub num: u32,
+    pub outcome: AttemptOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+// ---------------------------------------------------------------------------
 // Bean
 // ---------------------------------------------------------------------------
 
@@ -264,6 +292,29 @@ pub struct Bean {
     /// Maximum agent loops for this bean (overrides config default, 0 = unlimited).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_loops: Option<u32>,
+
+    // -- Memory system fields --
+
+    /// Bean type: 'task' (default) or 'fact' (verified knowledge).
+    #[serde(default = "default_bean_type", skip_serializing_if = "is_default_bean_type")]
+    pub bean_type: String,
+
+    /// Unix timestamp of last successful verify (for staleness detection).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_verified: Option<DateTime<Utc>>,
+
+    /// When this fact becomes stale (created_at + TTL). Only meaningful for facts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_after: Option<DateTime<Utc>>,
+
+    /// File paths this bean is relevant to (for context relevance scoring).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+
+    /// Structured attempt tracking: [{num, outcome, notes}].
+    /// Tracks claim→close cycles for episodic memory.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attempt_log: Vec<AttemptRecord>,
 }
 
 fn default_priority() -> u8 {
@@ -284,6 +335,14 @@ fn is_default_max_attempts(v: &u32) -> bool {
 
 fn is_false(v: &bool) -> bool {
     !*v
+}
+
+fn default_bean_type() -> String {
+    "task".to_string()
+}
+
+fn is_default_bean_type(v: &str) -> bool {
+    v == "task"
 }
 
 impl Bean {
@@ -329,6 +388,11 @@ impl Bean {
             history: Vec::new(),
             outputs: None,
             max_loops: None,
+            bean_type: "task".to_string(),
+            last_verified: None,
+            stale_after: None,
+            paths: Vec::new(),
+            attempt_log: Vec::new(),
         })
     }
 
@@ -510,6 +574,10 @@ impl Bean {
             "tokens_updated" => self.tokens_updated = serde_json::from_str(json_value)?,
             "outputs" => self.outputs = serde_json::from_str(json_value)?,
             "max_loops" => self.max_loops = serde_json::from_str(json_value)?,
+            "bean_type" => self.bean_type = serde_json::from_str(json_value)?,
+            "last_verified" => self.last_verified = serde_json::from_str(json_value)?,
+            "stale_after" => self.stale_after = serde_json::from_str(json_value)?,
+            "paths" => self.paths = serde_json::from_str(json_value)?,
             _ => return Err(anyhow::anyhow!("Unknown field: {}", field)),
         }
         self.updated_at = Utc::now();
@@ -587,6 +655,11 @@ mod tests {
             history: Vec::new(),
             outputs: Some(serde_json::json!({"key": "value"})),
             max_loops: None,
+            bean_type: "task".to_string(),
+            last_verified: None,
+            stale_after: None,
+            paths: Vec::new(),
+            attempt_log: Vec::new(),
         };
 
         let yaml = serde_yaml::to_string(&bean).unwrap();

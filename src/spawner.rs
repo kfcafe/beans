@@ -635,6 +635,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
 
         let result = spawner.spawn("1", "Test", AgentAction::Implement, &config);
@@ -657,6 +658,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
 
         let result = spawner.spawn("1", "Test", AgentAction::Plan, &config);

@@ -48,6 +48,7 @@ pub fn cmd_claim(beans_dir: &Path, id: &str, by: Option<String>) -> Result<()> {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         });
         if tokens > config.max_tokens as u64 {
             return Err(anyhow!(
@@ -264,6 +265,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -299,6 +301,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -330,6 +333,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -360,6 +364,7 @@ mod tests {
             max_concurrent: 4,
             poll_interval: 30,
             extends: vec![],
+            rules_file: None,
         };
         config.save(&beans_dir).unwrap();
 

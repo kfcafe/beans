@@ -193,6 +193,7 @@ pub fn plan_dispatch(beans_dir: &Path, auto_plan: bool) -> Result<DispatchPlan> 
         max_concurrent: 4,
         poll_interval: 30,
         extends: vec![],
+            rules_file: None,
     });
 
     let ready = get_ready_beans(beans_dir)?;
