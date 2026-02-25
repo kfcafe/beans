@@ -41,6 +41,12 @@ pub struct Config {
     /// Contents are injected into every `bn context` output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rules_file: Option<String>,
+    /// Enable file locking for concurrent agents (default: false).
+    /// When enabled, agents lock files listed in bean `paths` on spawn
+    /// and lock-on-write during execution. Prevents concurrent agents
+    /// from clobbering the same file.
+    #[serde(default, skip_serializing_if = "is_false_bool")]
+    pub file_locking: bool,
 }
 
 fn default_auto_close_parent() -> bool {
@@ -61,6 +67,10 @@ fn default_max_concurrent() -> u32 {
 
 fn default_poll_interval() -> u32 {
     30
+}
+
+fn is_false_bool(v: &bool) -> bool {
+    !v
 }
 
 impl Config {
@@ -142,6 +152,9 @@ impl Config {
             if config.rules_file.is_none() {
                 config.rules_file = parent.rules_file.clone();
             }
+            if !config.file_locking {
+                config.file_locking = parent.file_locking;
+            }
             // Never inherit: project, next_id, extends
         }
 
@@ -215,6 +228,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
 
         config.save(dir.path()).unwrap();
@@ -237,6 +251,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
 
         assert_eq!(config.increment_id(), 1);
@@ -275,6 +290,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -312,6 +328,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -348,6 +365,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -383,6 +401,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -408,6 +427,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -443,6 +463,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -655,6 +676,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -705,6 +727,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -727,6 +750,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -762,6 +786,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -797,6 +822,7 @@ mod tests {
             poll_interval: 60,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(dir.path()).unwrap();
 
@@ -897,6 +923,7 @@ mod tests {
             poll_interval: 60,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
 
         config.save(dir.path()).unwrap();

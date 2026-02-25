@@ -636,6 +636,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
 
         let result = spawner.spawn("1", "Test", AgentAction::Implement, &config);
@@ -659,6 +660,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
 
         let result = spawner.spawn("1", "Test", AgentAction::Plan, &config);

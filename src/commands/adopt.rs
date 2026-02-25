@@ -235,6 +235,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         config.save(&beans_dir).unwrap();
 

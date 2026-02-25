@@ -74,6 +74,7 @@ pub struct SizedBean {
     pub parent: Option<String>,
     pub produces: Vec<String>,
     pub requires: Vec<String>,
+    pub paths: Vec<String>,
 }
 
 /// A wave of beans that can be dispatched in parallel.
@@ -177,7 +178,13 @@ fn run_once(
     args: &RunArgs,
     spawn_mode: &SpawnMode,
 ) -> Result<()> {
-    let plan = plan_dispatch(beans_dir, config, args.id.as_deref(), args.auto_plan)?;
+    let plan = plan_dispatch(
+        beans_dir,
+        config,
+        args.id.as_deref(),
+        args.auto_plan,
+        args.dry_run,
+    )?;
 
     if plan.waves.is_empty() && plan.skipped.is_empty() {
         if args.json_stream {
@@ -257,6 +264,7 @@ fn run_once(
                 args.idle_timeout,
                 args.json_stream,
                 args.keep_going,
+                config.file_locking,
             )?;
 
             let mut done = 0u32;
@@ -330,6 +338,7 @@ fn run_once(
                     args.idle_timeout,
                     args.json_stream,
                     wave_idx + 1,
+                    config.file_locking,
                 )?;
 
                 let mut wave_success = 0usize;
@@ -439,7 +448,7 @@ fn run_loop(
             }
         }
 
-        let plan = plan_dispatch(beans_dir, config, args.id.as_deref(), args.auto_plan)?;
+        let plan = plan_dispatch(beans_dir, config, args.id.as_deref(), args.auto_plan, false)?;
 
         if plan.waves.is_empty() {
             if !args.json_stream {
@@ -490,15 +499,23 @@ fn plan_dispatch(
     config: &Config,
     filter_id: Option<&str>,
     auto_plan: bool,
+    simulate: bool,
 ) -> Result<DispatchPlan> {
     let index = Index::load_or_rebuild(beans_dir)?;
     let workspace = beans_dir.parent().unwrap_or(Path::new("."));
 
-    // Get ready beans (open, has verify, all deps met)
+    // Get beans to dispatch.
+    // In simulate mode (dry-run), include all open beans with verify — even those
+    // whose deps aren't met yet — so compute_waves can show the full execution plan.
+    // In normal mode, only include beans whose deps are already closed.
     let mut ready_entries: Vec<&IndexEntry> = index
         .beans
         .iter()
-        .filter(|e| e.has_verify && e.status == Status::Open && all_deps_closed(e, &index))
+        .filter(|e| {
+            e.has_verify
+                && e.status == Status::Open
+                && (simulate || all_deps_closed(e, &index))
+        })
         .collect();
 
     // Filter by ID if provided
@@ -537,6 +554,7 @@ fn plan_dispatch(
             parent: entry.parent.clone(),
             produces: entry.produces.clone(),
             requires: entry.requires.clone(),
+            paths: bean.paths.clone(),
         });
     }
 
@@ -655,6 +673,7 @@ fn run_wave(
     idle_timeout_minutes: u32,
     json_stream: bool,
     wave_number: usize,
+    file_locking: bool,
 ) -> Result<Vec<AgentResult>> {
     match spawn_mode {
         SpawnMode::Template {
@@ -675,6 +694,7 @@ fn run_wave(
             idle_timeout_minutes,
             json_stream,
             wave_number,
+            file_locking,
         ),
     }
 }
@@ -800,6 +820,7 @@ fn run_wave_direct(
     idle_timeout_minutes: u32,
     json_stream: bool,
     wave_number: usize,
+    file_locking: bool,
 ) -> Result<Vec<AgentResult>> {
     let results = Arc::new(Mutex::new(Vec::new()));
     let mut pending: Vec<SizedBean> = beans.to_vec();
@@ -824,7 +845,7 @@ fn run_wave_direct(
 
             let handle = std::thread::spawn(move || {
                 let result =
-                    run_single_direct(&beans_dir, &sb, timeout_min, idle_min, json_stream);
+                    run_single_direct(&beans_dir, &sb, timeout_min, idle_min, json_stream, file_locking);
                 results.lock().unwrap().push(result);
             });
             handles.push(handle);
@@ -895,6 +916,7 @@ fn run_ready_queue_direct(
     idle_timeout_minutes: u32,
     json_stream: bool,
     keep_going: bool,
+    file_locking: bool,
 ) -> Result<(Vec<AgentResult>, bool)> {
     let all_bean_ids: HashSet<String> = all_beans.iter().map(|b| b.id.clone()).collect();
 
@@ -974,7 +996,7 @@ fn run_ready_queue_direct(
             let idle_min = idle_timeout_minutes;
 
             std::thread::spawn(move || {
-                let result = run_single_direct(&beans_dir, &sb, timeout_min, idle_min, json_stream);
+                let result = run_single_direct(&beans_dir, &sb, timeout_min, idle_min, json_stream, file_locking);
                 let _ = tx.send(result);
             });
             newly_started += 1;
@@ -1050,8 +1072,34 @@ fn run_single_direct(
     timeout_minutes: u32,
     idle_timeout_minutes: u32,
     json_stream: bool,
+    file_locking: bool,
 ) -> AgentResult {
     let started = Instant::now();
+
+    // Pre-emptive file locking: lock files listed in the bean's `paths` field.
+    if file_locking && !sb.paths.is_empty() {
+        let pid = std::process::id();
+        for path in &sb.paths {
+            match crate::locks::acquire(beans_dir, &sb.id, pid, path) {
+                Ok(true) => {}
+                Ok(false) => {
+                    // Already locked by another agent — check who holds it
+                    let holder = crate::locks::check_lock(beans_dir, path)
+                        .ok()
+                        .flatten()
+                        .map(|l| format!("bean {} (pid {})", l.bean_id, l.pid))
+                        .unwrap_or_else(|| "unknown".to_string());
+                    eprintln!(
+                        "  ⚠ Cannot lock {} for bean {} — held by {}",
+                        path, sb.id, holder
+                    );
+                }
+                Err(e) => {
+                    eprintln!("  ⚠ Lock error for {}: {}", path, e);
+                }
+            }
+        }
+    }
 
     // Find the bean file
     let bean_file = match crate::discovery::find_bean_file(beans_dir, &sb.id) {
@@ -1234,6 +1282,11 @@ fn run_single_direct(
         ),
         MonitorResult::Killed => (false, Some("Process was killed".to_string())),
     };
+
+    // Release all file locks held by this bean.
+    if file_locking {
+        let _ = crate::locks::release_all_for_bean(beans_dir, &sb.id);
+    }
 
     AgentResult {
         id: sb.id.clone(),
@@ -1494,7 +1547,7 @@ mod tests {
         write_config(&beans_dir, Some("echo {id}"));
 
         let config = Config::load_with_extends(&beans_dir).unwrap();
-        let plan = plan_dispatch(&beans_dir, &config, None, false).unwrap();
+        let plan = plan_dispatch(&beans_dir, &config, None, false, false).unwrap();
 
         assert!(plan.waves.is_empty());
         assert!(plan.skipped.is_empty());
@@ -1514,7 +1567,7 @@ mod tests {
         bean2.to_file(beans_dir.join("2-task-two.md")).unwrap();
 
         let config = Config::load_with_extends(&beans_dir).unwrap();
-        let plan = plan_dispatch(&beans_dir, &config, None, false).unwrap();
+        let plan = plan_dispatch(&beans_dir, &config, None, false, false).unwrap();
 
         assert_eq!(plan.waves.len(), 1);
         assert_eq!(plan.waves[0].beans.len(), 2);
@@ -1534,7 +1587,7 @@ mod tests {
         bean2.to_file(beans_dir.join("2-task-two.md")).unwrap();
 
         let config = Config::load_with_extends(&beans_dir).unwrap();
-        let plan = plan_dispatch(&beans_dir, &config, Some("1"), false).unwrap();
+        let plan = plan_dispatch(&beans_dir, &config, Some("1"), false, false).unwrap();
 
         assert_eq!(plan.waves.len(), 1);
         assert_eq!(plan.waves[0].beans.len(), 1);
@@ -1560,7 +1613,7 @@ mod tests {
         child2.to_file(beans_dir.join("1.2-child-two.md")).unwrap();
 
         let config = Config::load_with_extends(&beans_dir).unwrap();
-        let plan = plan_dispatch(&beans_dir, &config, Some("1"), false).unwrap();
+        let plan = plan_dispatch(&beans_dir, &config, Some("1"), false, false).unwrap();
 
         assert_eq!(plan.waves.len(), 1);
         assert_eq!(plan.waves[0].beans.len(), 2);
@@ -1580,6 +1633,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
+            paths: vec![],
             },
             SizedBean {
                 id: "2".to_string(),
@@ -1591,6 +1645,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
+            paths: vec![],
             },
         ];
         let waves = compute_waves(&beans, &index);
@@ -1612,6 +1667,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
+            paths: vec![],
             },
             SizedBean {
                 id: "2".to_string(),
@@ -1623,6 +1679,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
+            paths: vec![],
             },
             SizedBean {
                 id: "3".to_string(),
@@ -1634,6 +1691,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
+            paths: vec![],
             },
         ];
         let waves = compute_waves(&beans, &index);
@@ -1658,6 +1716,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
+            paths: vec![],
             },
             SizedBean {
                 id: "2".to_string(),
@@ -1669,6 +1728,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
+            paths: vec![],
             },
             SizedBean {
                 id: "3".to_string(),
@@ -1680,6 +1740,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
+            paths: vec![],
             },
             SizedBean {
                 id: "4".to_string(),
@@ -1691,6 +1752,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
+            paths: vec![],
             },
         ];
         let waves = compute_waves(&beans, &index);
@@ -1727,7 +1789,7 @@ mod tests {
         bean.to_file(beans_dir.join("1-large.md")).unwrap();
 
         let config = Config::load_with_extends(&beans_dir).unwrap();
-        let plan = plan_dispatch(&beans_dir, &config, None, false).unwrap();
+        let plan = plan_dispatch(&beans_dir, &config, None, false, false).unwrap();
 
         // Should be skipped (needs planning)
         assert_eq!(plan.skipped.len(), 1);
@@ -1749,7 +1811,7 @@ mod tests {
         bean.to_file(beans_dir.join("1-large.md")).unwrap();
 
         let config = Config::load_with_extends(&beans_dir).unwrap();
-        let plan = plan_dispatch(&beans_dir, &config, None, true).unwrap();
+        let plan = plan_dispatch(&beans_dir, &config, None, true, false).unwrap();
 
         // With auto_plan, large beans go into waves, not skipped
         assert!(plan.skipped.is_empty());
@@ -1773,6 +1835,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         let mode = determine_spawn_mode(&config);
         assert_eq!(
@@ -1798,6 +1861,7 @@ mod tests {
             poll_interval: 30,
             extends: vec![],
             rules_file: None,
+            file_locking: false,
         };
         let mode = determine_spawn_mode(&config);
         assert_eq!(mode, SpawnMode::Direct);
@@ -1824,6 +1888,80 @@ mod tests {
     }
 
     #[test]
+    fn dry_run_simulate_shows_all_waves() {
+        let (_dir, beans_dir) = make_beans_dir();
+        write_config(&beans_dir, Some("echo {id}"));
+
+        // Create a chain: 1.1 → 1.2 → 1.3 (parent=1)
+        let parent = crate::bean::Bean::new("1", "Parent");
+        parent.to_file(beans_dir.join("1-parent.md")).unwrap();
+
+        let mut a = crate::bean::Bean::new("1.1", "Step A");
+        a.parent = Some("1".to_string());
+        a.verify = Some("echo ok".to_string());
+        a.to_file(beans_dir.join("1.1-step-a.md")).unwrap();
+
+        let mut b = crate::bean::Bean::new("1.2", "Step B");
+        b.parent = Some("1".to_string());
+        b.verify = Some("echo ok".to_string());
+        b.dependencies = vec!["1.1".to_string()];
+        b.to_file(beans_dir.join("1.2-step-b.md")).unwrap();
+
+        let mut c = crate::bean::Bean::new("1.3", "Step C");
+        c.parent = Some("1".to_string());
+        c.verify = Some("echo ok".to_string());
+        c.dependencies = vec!["1.2".to_string()];
+        c.to_file(beans_dir.join("1.3-step-c.md")).unwrap();
+
+        // Without simulate: only wave 1 (1.1) is ready
+        let config = Config::load_with_extends(&beans_dir).unwrap();
+        let plan = plan_dispatch(&beans_dir, &config, Some("1"), false, false).unwrap();
+        assert_eq!(plan.waves.len(), 1);
+        assert_eq!(plan.waves[0].beans.len(), 1);
+        assert_eq!(plan.waves[0].beans[0].id, "1.1");
+
+        // With simulate: all 3 waves shown
+        let plan = plan_dispatch(&beans_dir, &config, Some("1"), false, true).unwrap();
+        assert_eq!(plan.waves.len(), 3);
+        assert_eq!(plan.waves[0].beans[0].id, "1.1");
+        assert_eq!(plan.waves[1].beans[0].id, "1.2");
+        assert_eq!(plan.waves[2].beans[0].id, "1.3");
+    }
+
+    #[test]
+    fn dry_run_simulate_respects_produces_requires() {
+        let (_dir, beans_dir) = make_beans_dir();
+        write_config(&beans_dir, Some("echo {id}"));
+
+        let parent = crate::bean::Bean::new("1", "Parent");
+        parent.to_file(beans_dir.join("1-parent.md")).unwrap();
+
+        let mut a = crate::bean::Bean::new("1.1", "Types");
+        a.parent = Some("1".to_string());
+        a.verify = Some("echo ok".to_string());
+        a.produces = vec!["types".to_string()];
+        a.to_file(beans_dir.join("1.1-types.md")).unwrap();
+
+        let mut b = crate::bean::Bean::new("1.2", "Impl");
+        b.parent = Some("1".to_string());
+        b.verify = Some("echo ok".to_string());
+        b.requires = vec!["types".to_string()];
+        b.to_file(beans_dir.join("1.2-impl.md")).unwrap();
+
+        // Without simulate: only 1.1 is ready (1.2 blocked on requires)
+        let config = Config::load_with_extends(&beans_dir).unwrap();
+        let plan = plan_dispatch(&beans_dir, &config, Some("1"), false, false).unwrap();
+        assert_eq!(plan.waves.len(), 1);
+        assert_eq!(plan.waves[0].beans[0].id, "1.1");
+
+        // With simulate: both shown in correct wave order
+        let plan = plan_dispatch(&beans_dir, &config, Some("1"), false, true).unwrap();
+        assert_eq!(plan.waves.len(), 2);
+        assert_eq!(plan.waves[0].beans[0].id, "1.1");
+        assert_eq!(plan.waves[1].beans[0].id, "1.2");
+    }
+
+    #[test]
     fn template_wave_execution_with_echo() {
         let beans = vec![SizedBean {
             id: "1".to_string(),
@@ -1835,6 +1973,7 @@ mod tests {
             parent: None,
             produces: vec![],
             requires: vec![],
+            paths: vec![],
         }];
 
         let results =
@@ -1856,6 +1995,7 @@ mod tests {
             parent: None,
             produces: vec![],
             requires: vec![],
+            paths: vec![],
         }];
 
         let results =
@@ -1877,6 +2017,7 @@ mod tests {
             parent: None,
             produces: vec![],
             requires: vec![],
+            paths: vec![],
         }];
 
         let results =
@@ -1940,6 +2081,7 @@ mod tests {
             parent: Some("parent".to_string()),
             produces: produces.into_iter().map(|s| s.to_string()).collect(),
             requires: requires.into_iter().map(|s| s.to_string()).collect(),
+            paths: vec![],
         }
     }
 

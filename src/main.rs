@@ -16,7 +16,7 @@ use bn::commands::{
     cmd_dep_tree, cmd_doctor, cmd_edit, cmd_fact, cmd_graph, cmd_init, cmd_list, cmd_logs,
     cmd_memory_context, cmd_plan, cmd_quick, cmd_ready, cmd_recall, cmd_release, cmd_reopen,
     cmd_run, cmd_show, cmd_stats, cmd_status, cmd_sync, cmd_tidy, cmd_tree,
-    cmd_trust, cmd_unarchive, cmd_update, cmd_verify, cmd_verify_facts,
+    cmd_trust, cmd_locks, cmd_locks_clear, cmd_unarchive, cmd_update, cmd_verify, cmd_verify_facts,
     cmd_mcp_serve,
 };
 use bn::discovery::find_beans_dir;
@@ -547,6 +547,14 @@ fn main() -> Result<()> {
             validate_bean_id(&id)?;
             let resolved_id = resolve_bean_id(&id, &beans_dir)?;
             cmd_unarchive(&beans_dir, &resolved_id)
+        }
+
+        Command::Locks { clear } => {
+            if clear {
+                cmd_locks_clear(&beans_dir)
+            } else {
+                cmd_locks(&beans_dir)
+            }
         }
 
         Command::Quick {

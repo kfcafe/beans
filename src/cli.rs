@@ -463,6 +463,14 @@ pub enum Command {
         id: String,
     },
 
+    /// View and manage file locks for concurrent agents
+    #[command(display_order = 46)]
+    Locks {
+        /// Force-clear all locks
+        #[arg(long)]
+        clear: bool,
+    },
+
     /// Quick-create: create a bean and immediately claim it
     #[command(visible_alias = "q", display_order = 3)]
     Quick {

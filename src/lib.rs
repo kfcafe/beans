@@ -8,6 +8,7 @@ pub mod discovery;
 pub mod graph;
 pub mod hooks;
 pub mod index;
+pub mod locks;
 pub mod mcp;
 pub mod pi_output;
 pub mod project;

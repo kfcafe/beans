@@ -229,11 +229,3 @@ beans:
   updated_at: 2026-02-24T06:51:01.814467Z
   has_verify: true
   attempts: 0
-- id: '84.14'
-  title: 'Fine-grained dispatch: start beans when their deps finish, not when whole wave finishes'
-  status: open
-  priority: 3
-  parent: '84'
-  updated_at: 2026-02-24T06:51:19.215991Z
-  has_verify: true
-  attempts: 0
