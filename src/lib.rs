@@ -1,3 +1,4 @@
+pub mod api;
 pub mod agent_presets;
 pub mod bean;
 pub mod cli;

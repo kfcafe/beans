@@ -60,7 +60,14 @@ Commands:
     unarchive    Unarchive a bean (move from archive back to main beans directory)
   help         Print this message or the help of the given subcommand(s)
 
-{options}"
+{options}
+Getting started:
+  bn init                                         Initialize .beans/ in this directory
+  bn create \"fix bug\" --verify \"cargo test auth\"  Create a task with a verify gate
+  bn run                                          Dispatch ready beans to agents
+  bn status                                       See what's in flight
+
+See 'bn <command> --help' for details and examples."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -71,7 +78,17 @@ pub struct Cli {
 pub enum Command {
     // -- TASKS --
     /// Initialize .beans/ in the current directory
-    #[command(display_order = 1)]
+    ///
+    /// Creates .beans/ with config.yaml and sets up agent command templates.
+    /// Agent presets (pi, claude, aider) auto-configure the run/plan commands.
+    /// Use --setup on an existing project to reconfigure the agent.
+    #[command(display_order = 1, after_help = "\
+Examples:
+  bn init                     Interactive setup
+  bn init --agent pi          Use pi agent preset
+  bn init --agent claude      Use Claude Code preset
+  bn init myproject           Name the project explicitly
+  bn init --setup             Reconfigure agent on existing project")]
     Init {
         /// Project name (auto-detected from directory if omitted)
         name: Option<String>,
@@ -98,7 +115,36 @@ pub enum Command {
     },
 
     /// Create a new bean
-    #[command(visible_alias = "new", display_order = 2, args_conflicts_with_subcommands = true)]
+    ///
+    /// Every bean needs a verify gate (--verify) — a shell command that must exit 0
+    /// to close the bean. The --description is the agent's prompt when dispatched via
+    /// `bn run`: include concrete steps, file paths, embedded types/signatures, and
+    /// what NOT to do.
+    ///
+    /// Use -p (--pass-ok) when verify already passes (refactors, docs, type changes).
+    /// Use --parent to create child beans under a larger parent task.
+    /// Use --produces/--requires to set up artifact-based dependency ordering.
+    #[command(
+        visible_alias = "new",
+        display_order = 2,
+        args_conflicts_with_subcommands = true,
+        after_help = "\
+Examples:
+  bn create \"fix login bug\" --verify \"cargo test auth::login\"
+  bn create \"add tests\" --verify \"pytest tests/auth.py\" -p
+  bn create \"refactor API\" --verify \"cargo build\" --description \"## Task\\n...\"
+  bn create \"add endpoint\" --parent 5 --verify \"cargo test\" --produces \"UserAPI\"
+  bn create next \"step 2\" --verify \"cargo test\"   (auto-depends on last bean)
+
+Verify patterns:
+  Rust     cargo test module::test_name
+  JS/TS    npx vitest run path/to/test
+  Python   pytest tests/file.py -k test_name
+  Go       go test ./pkg -run TestName
+  Check    grep -q 'expected' file.txt
+  Remove   ! grep -rq 'old_pattern' src/
+  Multi    cmd1 && cmd2 && cmd3"
+    )]
     Create {
         #[command(subcommand)]
         subcommand: Option<CreateSubcommand>,
@@ -188,6 +234,9 @@ pub enum Command {
     },
 
     /// Display full bean details
+    ///
+    /// Shows all fields: title, description, verify command, status, dependencies,
+    /// history, and notes. Use --short for a one-line summary.
     #[command(visible_alias = "view", display_order = 4)]
     Show {
         /// Bean ID
@@ -207,7 +256,18 @@ pub enum Command {
     },
 
     /// List beans with filtering
-    #[command(visible_alias = "ls", display_order = 5)]
+    ///
+    /// By default shows open and in-progress beans. Use --all to include closed.
+    /// Combine filters to narrow results. Use --ids for piping to other commands.
+    #[command(visible_alias = "ls", display_order = 5, after_help = "\
+Examples:
+  bn ls                              All open/in-progress beans
+  bn ls --all                        Include closed beans
+  bn ls --status in_progress         Only claimed beans
+  bn ls --label bug --priority 0     High-priority bugs
+  bn ls --parent 5                   Children of bean 5
+  bn ls --ids | xargs -I{} bn show {}   Pipe to other commands
+  bn ls --format '{id}\\t{title}'     Custom output format")]
     List {
         /// Filter by status (open, in_progress, closed)
         #[arg(long)]
@@ -254,7 +314,16 @@ pub enum Command {
     },
 
     /// Update bean fields
-    #[command(display_order = 7)]
+    ///
+    /// Use --note to log progress during work. Notes are timestamped and appended —
+    /// they survive retries, so the next agent reads what was tried and what failed.
+    /// Essential for debugging repeated failures.
+    #[command(display_order = 7, after_help = "\
+Examples:
+  bn update 5 --note \"Completed auth module, starting tests\"
+  bn update 5 --note \"Failed: JWT lib incompatible. Avoid: jsonwebtoken 8.x\"
+  bn update 5 --priority 0
+  bn update 5 --title \"Revised scope\" --add-label bug")]
     Update {
         /// Bean ID
         id: String,
@@ -301,7 +370,16 @@ pub enum Command {
     },
 
     /// Close one or more beans (runs verify gate first)
-    #[command(display_order = 9)]
+    ///
+    /// Runs the bean's verify command first — if it exits 0, the bean is closed.
+    /// If verify fails, the close is rejected unless --force is used.
+    /// Multiple IDs can be passed to batch-close.
+    #[command(display_order = 9, after_help = "\
+Examples:
+  bn close 5                   Close after verify passes
+  bn close 5 6 7               Batch close
+  bn close --force 5           Skip verify (force close)
+  bn ls --ids | bn close --stdin   Close all listed beans")]
     Close {
         /// Bean IDs (or use --stdin to read from pipe)
         #[arg(required_unless_present = "stdin")]
@@ -370,6 +448,9 @@ pub enum Command {
     },
 
     /// Show project status: claimed, ready, and blocked beans
+    ///
+    /// Quick overview of what's in flight, what's ready for dispatch, and what's
+    /// waiting on dependencies. Start here to understand project state.
     #[command(display_order = 20)]
     Status {
         /// JSON output
@@ -377,9 +458,17 @@ pub enum Command {
         json: bool,
     },
 
-    /// Output context for a bean (files referenced in description).
-    /// Without an ID, outputs memory context (stale facts, working on, recent work).
-    #[command(display_order = 25)]
+    /// Output context for a bean, or memory context (no args)
+    ///
+    /// With a bean ID: extracts and displays file contents referenced in the bean's
+    /// description. Without an ID: outputs memory context — stale facts, currently
+    /// claimed beans, and recent completions. Useful for agents to understand current
+    /// project state before starting work.
+    #[command(display_order = 25, after_help = "\
+Examples:
+  bn context         Memory context (stale facts, in-progress, recent work)
+  bn context 5       File context for bean 5 (reads referenced files)
+  bn context --json  Machine-readable memory context")]
     Context {
         /// Bean ID (omit for memory context)
         id: Option<String>,
@@ -472,7 +561,13 @@ pub enum Command {
     },
 
     /// Quick-create: create a bean and immediately claim it
-    #[command(visible_alias = "q", display_order = 3)]
+    ///
+    /// Use when you'll work on the bean yourself rather than dispatching to an agent.
+    /// Equivalent to `bn create "..." --claim`. For agent dispatch, use `bn create` instead.
+    #[command(visible_alias = "q", display_order = 3, after_help = "\
+Examples:
+  bn quick \"fix typo in README\" --verify \"grep -q 'correct text' README.md\"
+  bn quick \"add logging\" -p   (verify already passes — refactor)")]
     Quick {
         /// Bean title
         title: String,
@@ -534,6 +629,21 @@ pub enum Command {
     },
 
     /// Dispatch ready beans to agents
+    ///
+    /// Without an ID, finds all ready beans (open, no unresolved deps) and spawns
+    /// agents in parallel up to -j limit. With an ID, dispatches that specific bean.
+    /// Agents run the command template from .beans/config.yaml (set via `bn init`).
+    ///
+    /// Use --loop-mode for continuous dispatch until all work is done — it re-scans
+    /// for newly-ready beans after each wave completes. Use --auto-plan to automatically
+    /// break down large beans before dispatching.
+    #[command(after_help = "\
+Examples:
+  bn run              Dispatch all ready beans (up to -j 4 parallel)
+  bn run 5            Dispatch a specific bean
+  bn run --loop-mode  Keep going until no ready beans remain
+  bn run --dry-run    Preview what would be dispatched
+  bn run -j 8 --keep-going --timeout 60   High-throughput mode")]
     Run {
         /// Bean ID. Without ID, processes all ready beans.
         id: Option<String>,
@@ -572,6 +682,17 @@ pub enum Command {
     },
 
     /// Interactively plan a large bean into children
+    ///
+    /// Breaks a large bean into smaller child beans with proper dependencies.
+    /// Use when a bean touches too many files or would take a single agent too long.
+    /// Strategies: feature (by capability), layer (by architecture layer),
+    /// phase (sequential steps), file (one bean per file to change).
+    #[command(after_help = "\
+Examples:
+  bn plan 5                    Interactive breakdown of bean 5
+  bn plan --auto               Autonomous planning (no prompts)
+  bn plan 5 --strategy layer   Suggest layer-based split
+  bn plan 5 --dry-run          Preview without creating children")]
     Plan {
         /// Bean ID to plan (omit to pick automatically)
         id: Option<String>,
@@ -602,7 +723,15 @@ pub enum Command {
     },
 
     /// View agent output from log files
-    #[command(display_order = 38)]
+    ///
+    /// Shows the agent's stdout/stderr from its most recent run. Use --all to see
+    /// output from all runs (helpful when debugging repeated failures). Use -f to
+    /// follow live output while an agent is running.
+    #[command(display_order = 38, after_help = "\
+Examples:
+  bn logs 5          Latest run output
+  bn logs 5 --all    All runs (for debugging retries)
+  bn logs 5 -f       Follow live output")]
     Logs {
         /// Bean ID
         id: String,
@@ -634,7 +763,16 @@ pub enum Command {
 
     // -- MEMORY --
     /// Create a verified fact (requires --verify)
-    #[command(display_order = 50)]
+    ///
+    /// Facts are verified truths about the project that persist across agent sessions.
+    /// Each fact has a verify command that proves it's still true, and a TTL (default
+    /// 30 days). Stale facts appear in `bn context` output. Re-check all facts with
+    /// `bn verify-facts`. Good facts capture things agents need but can't infer from code.
+    #[command(display_order = 50, after_help = "\
+Examples:
+  bn fact \"API uses Axum 0.8\" --verify \"grep -q 'axum = \\\"0.8' Cargo.toml\"
+  bn fact \"Auth tokens expire after 24h\" --verify \"grep -q '24 * 60' src/config.rs\"
+  bn fact \"Tests require Docker\" --verify \"docker info >/dev/null 2>&1\" --ttl 90")]
     Fact {
         /// Fact title (what is true)
         title: String,
@@ -661,7 +799,13 @@ pub enum Command {
     },
 
     /// Search beans by keyword
-    #[command(display_order = 51)]
+    ///
+    /// Searches titles, descriptions, and notes. Use --all to include closed/archived beans.
+    #[command(display_order = 51, after_help = "\
+Examples:
+  bn recall \"auth\"           Search open beans
+  bn recall \"JWT\" --all      Include closed/archived
+  bn recall \"login\" --json   Machine-readable results")]
     Recall {
         /// Search query
         query: String,
