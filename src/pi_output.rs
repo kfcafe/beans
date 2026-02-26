@@ -65,12 +65,8 @@ pub fn parse_agent_event(raw: &serde_json::Value) -> Option<AgentEvent> {
                     if let Some(msg) = raw.get("message") {
                         if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
                             for block in content {
-                                if block.get("type").and_then(|t| t.as_str())
-                                    == Some("toolCall")
-                                {
-                                    if let Some(name) =
-                                        block.get("name").and_then(|n| n.as_str())
-                                    {
+                                if block.get("type").and_then(|t| t.as_str()) == Some("toolCall") {
+                                    if let Some(name) = block.get("name").and_then(|n| n.as_str()) {
                                         let id = block
                                             .get("id")
                                             .and_then(|i| i.as_str())
@@ -90,9 +86,7 @@ pub fn parse_agent_event(raw: &serde_json::Value) -> Option<AgentEvent> {
                     if let Some(msg) = raw.get("message") {
                         if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
                             for block in content {
-                                if block.get("type").and_then(|t| t.as_str())
-                                    == Some("toolCall")
-                                {
+                                if block.get("type").and_then(|t| t.as_str()) == Some("toolCall") {
                                     let name = block
                                         .get("name")
                                         .and_then(|n| n.as_str())
@@ -412,10 +406,7 @@ mod tests {
     #[test]
     fn pi_output_extract_read_path() {
         let args = json!({ "path": "src/lib.rs" });
-        assert_eq!(
-            extract_file_path("Read", &args),
-            Some("src/lib.rs".into())
-        );
+        assert_eq!(extract_file_path("Read", &args), Some("src/lib.rs".into()));
     }
 
     #[test]
@@ -430,28 +421,19 @@ mod tests {
     #[test]
     fn pi_output_extract_edit_path() {
         let args = json!({ "path": "Cargo.toml", "oldText": "a", "newText": "b" });
-        assert_eq!(
-            extract_file_path("Edit", &args),
-            Some("Cargo.toml".into())
-        );
+        assert_eq!(extract_file_path("Edit", &args), Some("Cargo.toml".into()));
     }
 
     #[test]
     fn pi_output_extract_bash_with_file() {
         let args = json!({ "command": "cat src/main.rs" });
-        assert_eq!(
-            extract_file_path("Bash", &args),
-            Some("src/main.rs".into())
-        );
+        assert_eq!(extract_file_path("Bash", &args), Some("src/main.rs".into()));
     }
 
     #[test]
     fn pi_output_extract_bash_with_path() {
         let args = json!({ "command": "ls /tmp/foo" });
-        assert_eq!(
-            extract_file_path("Bash", &args),
-            Some("/tmp/foo".into())
-        );
+        assert_eq!(extract_file_path("Bash", &args), Some("/tmp/foo".into()));
     }
 
     #[test]

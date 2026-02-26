@@ -58,7 +58,9 @@ pub use crate::index::{Index, IndexEntry};
 pub use crate::config::Config;
 
 // Discovery functions
-pub use crate::discovery::{archive_path_for_bean, find_archived_bean, find_bean_file, find_beans_dir};
+pub use crate::discovery::{
+    archive_path_for_bean, find_archived_bean, find_bean_file, find_beans_dir,
+};
 
 // Graph functions
 pub use crate::graph::{

@@ -16,7 +16,9 @@ pub fn resource_definitions() -> Vec<ResourceDefinition> {
         ResourceDefinition {
             uri: "beans://status".to_string(),
             name: "Project Status".to_string(),
-            description: Some("Current project status: claimed, ready, goals, and blocked beans".to_string()),
+            description: Some(
+                "Current project status: claimed, ready, goals, and blocked beans".to_string(),
+            ),
             mime_type: Some("application/json".to_string()),
         },
         ResourceDefinition {
@@ -111,8 +113,7 @@ fn read_rules_resource(beans_dir: &Path) -> Result<Vec<ResourceContent>> {
         }]);
     }
 
-    let text = std::fs::read_to_string(&rules_path)
-        .context("Failed to read RULES.md")?;
+    let text = std::fs::read_to_string(&rules_path).context("Failed to read RULES.md")?;
 
     Ok(vec![ResourceContent {
         uri: "beans://rules".to_string(),
@@ -126,8 +127,7 @@ fn read_bean_resource(id: &str, beans_dir: &Path) -> Result<Vec<ResourceContent>
     let bean_path = find_bean_file(beans_dir, id)?;
     let bean = Bean::from_file(&bean_path)?;
 
-    let text = serde_json::to_string_pretty(&bean)
-        .context("Failed to serialize bean")?;
+    let text = serde_json::to_string_pretty(&bean).context("Failed to serialize bean")?;
 
     Ok(vec![ResourceContent {
         uri: format!("beans://bean/{}", id),

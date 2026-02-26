@@ -6,8 +6,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::mcp::protocol::{
-    JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND,
-    PARSE_ERROR,
+    JsonRpcRequest, JsonRpcResponse, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, PARSE_ERROR,
 };
 use crate::mcp::resources;
 use crate::mcp::tools;
@@ -46,11 +45,8 @@ pub fn run(beans_dir: &Path) -> anyhow::Result<()> {
             Ok(r) => r,
             Err(e) => {
                 // Parse error — respond with error if we can extract an id
-                let error_response = JsonRpcResponse::error(
-                    Value::Null,
-                    PARSE_ERROR,
-                    format!("Parse error: {}", e),
-                );
+                let error_response =
+                    JsonRpcResponse::error(Value::Null, PARSE_ERROR, format!("Parse error: {}", e));
                 write_response(&mut writer, &error_response)?;
                 continue;
             }
@@ -156,11 +152,7 @@ fn handle_tools_list(id: Value) -> JsonRpcResponse {
     JsonRpcResponse::success(id, json!({ "tools": tools_json }))
 }
 
-fn handle_tools_call(
-    params: &Option<Value>,
-    id: Value,
-    beans_dir: &Path,
-) -> JsonRpcResponse {
+fn handle_tools_call(params: &Option<Value>, id: Value, beans_dir: &Path) -> JsonRpcResponse {
     let params = match params {
         Some(p) => p,
         None => {
@@ -204,11 +196,7 @@ fn handle_resources_list(id: Value) -> JsonRpcResponse {
     JsonRpcResponse::success(id, json!({ "resources": resources_json }))
 }
 
-fn handle_resources_read(
-    params: &Option<Value>,
-    id: Value,
-    beans_dir: &Path,
-) -> JsonRpcResponse {
+fn handle_resources_read(params: &Option<Value>, id: Value, beans_dir: &Path) -> JsonRpcResponse {
     let params = match params {
         Some(p) => p,
         None => {

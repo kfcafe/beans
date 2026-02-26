@@ -10,11 +10,7 @@ fn setup_test_env() -> (TempDir, std::path::PathBuf) {
     fs::create_dir_all(&beans_dir).unwrap();
 
     // Write minimal config
-    fs::write(
-        beans_dir.join("config.yaml"),
-        "next_id: 2\n",
-    )
-    .unwrap();
+    fs::write(beans_dir.join("config.yaml"), "next_id: 2\n").unwrap();
 
     // Write a sample bean
     let bean = Bean::new("1", "Sample task");

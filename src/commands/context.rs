@@ -121,8 +121,7 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool) -> Result<()> {
         }
 
         // Assemble the bean-specific context from referenced files
-        let context =
-            assemble_context(paths, project_dir).context("Failed to assemble context")?;
+        let context = assemble_context(paths, project_dir).context("Failed to assemble context")?;
         output.push_str(&context);
 
         // Output the assembled markdown to stdout

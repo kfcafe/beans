@@ -99,10 +99,7 @@ pub fn cmd_recall(beans_dir: &Path, query: &str, all: bool, json: bool) -> Resul
 
             let status_str = match bean.status {
                 Status::Closed => {
-                    let reason = bean
-                        .close_reason
-                        .as_deref()
-                        .unwrap_or("closed");
+                    let reason = bean.close_reason.as_deref().unwrap_or("closed");
                     format!("({})", reason)
                 }
                 _ => format!("({})", bean.status),

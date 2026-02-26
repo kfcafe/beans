@@ -285,8 +285,8 @@ pub fn cmd_init(path: Option<&Path>, args: InitArgs) -> Result<()> {
         max_concurrent: 4,
         poll_interval: 30,
         extends: vec![],
-            rules_file: None,
-            file_locking: false,
+        rules_file: None,
+        file_locking: false,
     };
 
     config.save(&beans_dir)?;

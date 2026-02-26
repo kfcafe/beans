@@ -136,7 +136,10 @@ pub fn cmd_run(beans_dir: &Path, args: RunArgs) -> Result<()> {
         );
     }
 
-    if let SpawnMode::Template { ref run_template, .. } = spawn_mode {
+    if let SpawnMode::Template {
+        ref run_template, ..
+    } = spawn_mode
+    {
         // Validate template exists (kept for backward compat error message)
         let _ = run_template;
     }
@@ -512,9 +515,7 @@ fn plan_dispatch(
         .beans
         .iter()
         .filter(|e| {
-            e.has_verify
-                && e.status == Status::Open
-                && (simulate || all_deps_closed(e, &index))
+            e.has_verify && e.status == Status::Open && (simulate || all_deps_closed(e, &index))
         })
         .collect();
 
@@ -844,8 +845,14 @@ fn run_wave_direct(
             }
 
             let handle = std::thread::spawn(move || {
-                let result =
-                    run_single_direct(&beans_dir, &sb, timeout_min, idle_min, json_stream, file_locking);
+                let result = run_single_direct(
+                    &beans_dir,
+                    &sb,
+                    timeout_min,
+                    idle_min,
+                    json_stream,
+                    file_locking,
+                );
                 results.lock().unwrap().push(result);
             });
             handles.push(handle);
@@ -996,7 +1003,14 @@ fn run_ready_queue_direct(
             let idle_min = idle_timeout_minutes;
 
             std::thread::spawn(move || {
-                let result = run_single_direct(&beans_dir, &sb, timeout_min, idle_min, json_stream, file_locking);
+                let result = run_single_direct(
+                    &beans_dir,
+                    &sb,
+                    timeout_min,
+                    idle_min,
+                    json_stream,
+                    file_locking,
+                );
                 let _ = tx.send(result);
             });
             newly_started += 1;
@@ -1211,8 +1225,7 @@ fn run_single_direct(
                         ref arguments,
                     } => {
                         if json_stream {
-                            let file_path =
-                                pi_output::extract_file_path(name, arguments);
+                            let file_path = pi_output::extract_file_path(name, arguments);
                             stream::emit(&StreamEvent::BeanTool {
                                 id: bean_id.clone(),
                                 tool_name: name.clone(),
@@ -1268,17 +1281,11 @@ fn run_single_direct(
         }
         MonitorResult::TotalTimeout => (
             false,
-            Some(format!(
-                "Total timeout exceeded ({}m)",
-                timeout_minutes
-            )),
+            Some(format!("Total timeout exceeded ({}m)", timeout_minutes)),
         ),
         MonitorResult::IdleTimeout => (
             false,
-            Some(format!(
-                "Idle timeout exceeded ({}m)",
-                idle_timeout_minutes
-            )),
+            Some(format!("Idle timeout exceeded ({}m)", idle_timeout_minutes)),
         ),
         MonitorResult::Killed => (false, Some("Process was killed".to_string())),
     };
@@ -1415,10 +1422,7 @@ fn print_plan_json(plan: &DispatchPlan, parent_id: Option<&str>) {
         })
         .collect();
 
-    stream::emit(&StreamEvent::DryRun {
-        parent_id,
-        rounds,
-    });
+    stream::emit(&StreamEvent::DryRun { parent_id, rounds });
 }
 
 /// Format a duration as M:SS.
@@ -1633,7 +1637,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
-            paths: vec![],
+                paths: vec![],
             },
             SizedBean {
                 id: "2".to_string(),
@@ -1645,7 +1649,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
-            paths: vec![],
+                paths: vec![],
             },
         ];
         let waves = compute_waves(&beans, &index);
@@ -1667,7 +1671,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
-            paths: vec![],
+                paths: vec![],
             },
             SizedBean {
                 id: "2".to_string(),
@@ -1679,7 +1683,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
-            paths: vec![],
+                paths: vec![],
             },
             SizedBean {
                 id: "3".to_string(),
@@ -1691,7 +1695,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
-            paths: vec![],
+                paths: vec![],
             },
         ];
         let waves = compute_waves(&beans, &index);
@@ -1716,7 +1720,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
-            paths: vec![],
+                paths: vec![],
             },
             SizedBean {
                 id: "2".to_string(),
@@ -1728,7 +1732,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
-            paths: vec![],
+                paths: vec![],
             },
             SizedBean {
                 id: "3".to_string(),
@@ -1740,7 +1744,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
-            paths: vec![],
+                paths: vec![],
             },
             SizedBean {
                 id: "4".to_string(),
@@ -1752,7 +1756,7 @@ mod tests {
                 parent: None,
                 produces: vec![],
                 requires: vec![],
-            paths: vec![],
+                paths: vec![],
             },
         ];
         let waves = compute_waves(&beans, &index);
@@ -1976,8 +1980,7 @@ mod tests {
             paths: vec![],
         }];
 
-        let results =
-            run_wave_template(&beans, "echo {id}", None, 4, 30).unwrap();
+        let results = run_wave_template(&beans, "echo {id}", None, 4, 30).unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].success);
         assert_eq!(results[0].id, "1");
@@ -1998,11 +2001,14 @@ mod tests {
             paths: vec![],
         }];
 
-        let results =
-            run_wave_template(&beans, "echo {id}", None, 4, 30).unwrap();
+        let results = run_wave_template(&beans, "echo {id}", None, 4, 30).unwrap();
         assert_eq!(results.len(), 1);
         assert!(!results[0].success);
-        assert!(results[0].error.as_ref().unwrap().contains("No plan template"));
+        assert!(results[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("No plan template"));
     }
 
     #[test]
@@ -2020,8 +2026,7 @@ mod tests {
             paths: vec![],
         }];
 
-        let results =
-            run_wave_template(&beans, "false", None, 4, 30).unwrap();
+        let results = run_wave_template(&beans, "false", None, 4, 30).unwrap();
         assert_eq!(results.len(), 1);
         assert!(!results[0].success);
         assert!(results[0].error.is_some());
@@ -2070,7 +2075,12 @@ mod tests {
 
     // -- Ready-queue tests --
 
-    fn make_sized_bean(id: &str, deps: Vec<&str>, produces: Vec<&str>, requires: Vec<&str>) -> SizedBean {
+    fn make_sized_bean(
+        id: &str,
+        deps: Vec<&str>,
+        produces: Vec<&str>,
+        requires: Vec<&str>,
+    ) -> SizedBean {
         SizedBean {
             id: id.to_string(),
             title: format!("Bean {}", id),

@@ -82,13 +82,16 @@ pub enum Command {
     /// Creates .beans/ with config.yaml and sets up agent command templates.
     /// Agent presets (pi, claude, aider) auto-configure the run/plan commands.
     /// Use --setup on an existing project to reconfigure the agent.
-    #[command(display_order = 1, after_help = "\
+    #[command(
+        display_order = 1,
+        after_help = "\
 Examples:
   bn init                     Interactive setup
   bn init --agent pi          Use pi agent preset
   bn init --agent claude      Use Claude Code preset
   bn init myproject           Name the project explicitly
-  bn init --setup             Reconfigure agent on existing project")]
+  bn init --setup             Reconfigure agent on existing project"
+    )]
     Init {
         /// Project name (auto-detected from directory if omitted)
         name: Option<String>,
@@ -259,7 +262,10 @@ Verify patterns:
     ///
     /// By default shows open and in-progress beans. Use --all to include closed.
     /// Combine filters to narrow results. Use --ids for piping to other commands.
-    #[command(visible_alias = "ls", display_order = 5, after_help = "\
+    #[command(
+        visible_alias = "ls",
+        display_order = 5,
+        after_help = "\
 Examples:
   bn ls                              All open/in-progress beans
   bn ls --all                        Include closed beans
@@ -267,7 +273,8 @@ Examples:
   bn ls --label bug --priority 0     High-priority bugs
   bn ls --parent 5                   Children of bean 5
   bn ls --ids | xargs -I{} bn show {}   Pipe to other commands
-  bn ls --format '{id}\\t{title}'     Custom output format")]
+  bn ls --format '{id}\\t{title}'     Custom output format"
+    )]
     List {
         /// Filter by status (open, in_progress, closed)
         #[arg(long)]
@@ -318,12 +325,15 @@ Examples:
     /// Use --note to log progress during work. Notes are timestamped and appended —
     /// they survive retries, so the next agent reads what was tried and what failed.
     /// Essential for debugging repeated failures.
-    #[command(display_order = 7, after_help = "\
+    #[command(
+        display_order = 7,
+        after_help = "\
 Examples:
   bn update 5 --note \"Completed auth module, starting tests\"
   bn update 5 --note \"Failed: JWT lib incompatible. Avoid: jsonwebtoken 8.x\"
   bn update 5 --priority 0
-  bn update 5 --title \"Revised scope\" --add-label bug")]
+  bn update 5 --title \"Revised scope\" --add-label bug"
+    )]
     Update {
         /// Bean ID
         id: String,
@@ -374,12 +384,15 @@ Examples:
     /// Runs the bean's verify command first — if it exits 0, the bean is closed.
     /// If verify fails, the close is rejected unless --force is used.
     /// Multiple IDs can be passed to batch-close.
-    #[command(display_order = 9, after_help = "\
+    #[command(
+        display_order = 9,
+        after_help = "\
 Examples:
   bn close 5                   Close after verify passes
   bn close 5 6 7               Batch close
   bn close --force 5           Skip verify (force close)
-  bn ls --ids | bn close --stdin   Close all listed beans")]
+  bn ls --ids | bn close --stdin   Close all listed beans"
+    )]
     Close {
         /// Bean IDs (or use --stdin to read from pipe)
         #[arg(required_unless_present = "stdin")]
@@ -464,11 +477,14 @@ Examples:
     /// description. Without an ID: outputs memory context — stale facts, currently
     /// claimed beans, and recent completions. Useful for agents to understand current
     /// project state before starting work.
-    #[command(display_order = 25, after_help = "\
+    #[command(
+        display_order = 25,
+        after_help = "\
 Examples:
   bn context         Memory context (stale facts, in-progress, recent work)
   bn context 5       File context for bean 5 (reads referenced files)
-  bn context --json  Machine-readable memory context")]
+  bn context --json  Machine-readable memory context"
+    )]
     Context {
         /// Bean ID (omit for memory context)
         id: Option<String>,
@@ -564,10 +580,14 @@ Examples:
     ///
     /// Use when you'll work on the bean yourself rather than dispatching to an agent.
     /// Equivalent to `bn create "..." --claim`. For agent dispatch, use `bn create` instead.
-    #[command(visible_alias = "q", display_order = 3, after_help = "\
+    #[command(
+        visible_alias = "q",
+        display_order = 3,
+        after_help = "\
 Examples:
   bn quick \"fix typo in README\" --verify \"grep -q 'correct text' README.md\"
-  bn quick \"add logging\" -p   (verify already passes — refactor)")]
+  bn quick \"add logging\" -p   (verify already passes — refactor)"
+    )]
     Quick {
         /// Bean title
         title: String,
@@ -727,11 +747,14 @@ Examples:
     /// Shows the agent's stdout/stderr from its most recent run. Use --all to see
     /// output from all runs (helpful when debugging repeated failures). Use -f to
     /// follow live output while an agent is running.
-    #[command(display_order = 38, after_help = "\
+    #[command(
+        display_order = 38,
+        after_help = "\
 Examples:
   bn logs 5          Latest run output
   bn logs 5 --all    All runs (for debugging retries)
-  bn logs 5 -f       Follow live output")]
+  bn logs 5 -f       Follow live output"
+    )]
     Logs {
         /// Bean ID
         id: String,
@@ -768,11 +791,14 @@ Examples:
     /// Each fact has a verify command that proves it's still true, and a TTL (default
     /// 30 days). Stale facts appear in `bn context` output. Re-check all facts with
     /// `bn verify-facts`. Good facts capture things agents need but can't infer from code.
-    #[command(display_order = 50, after_help = "\
+    #[command(
+        display_order = 50,
+        after_help = "\
 Examples:
   bn fact \"API uses Axum 0.8\" --verify \"grep -q 'axum = \\\"0.8' Cargo.toml\"
   bn fact \"Auth tokens expire after 24h\" --verify \"grep -q '24 * 60' src/config.rs\"
-  bn fact \"Tests require Docker\" --verify \"docker info >/dev/null 2>&1\" --ttl 90")]
+  bn fact \"Tests require Docker\" --verify \"docker info >/dev/null 2>&1\" --ttl 90"
+    )]
     Fact {
         /// Fact title (what is true)
         title: String,
@@ -801,11 +827,14 @@ Examples:
     /// Search beans by keyword
     ///
     /// Searches titles, descriptions, and notes. Use --all to include closed/archived beans.
-    #[command(display_order = 51, after_help = "\
+    #[command(
+        display_order = 51,
+        after_help = "\
 Examples:
   bn recall \"auth\"           Search open beans
   bn recall \"JWT\" --all      Include closed/archived
-  bn recall \"login\" --json   Machine-readable results")]
+  bn recall \"login\" --json   Machine-readable results"
+    )]
     Recall {
         /// Search query
         query: String,

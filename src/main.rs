@@ -13,11 +13,10 @@ use bn::commands::quick::QuickArgs;
 use bn::commands::{
     cmd_adopt, cmd_agents, cmd_blocked, cmd_claim, cmd_close, cmd_config_get, cmd_config_set,
     cmd_context, cmd_create, cmd_delete, cmd_dep_add, cmd_dep_cycles, cmd_dep_list, cmd_dep_remove,
-    cmd_dep_tree, cmd_doctor, cmd_edit, cmd_fact, cmd_graph, cmd_init, cmd_list, cmd_logs,
-    cmd_memory_context, cmd_plan, cmd_quick, cmd_ready, cmd_recall, cmd_release, cmd_reopen,
-    cmd_run, cmd_show, cmd_stats, cmd_status, cmd_sync, cmd_tidy, cmd_tree,
-    cmd_trust, cmd_locks, cmd_locks_clear, cmd_unarchive, cmd_update, cmd_verify, cmd_verify_facts,
-    cmd_mcp_serve,
+    cmd_dep_tree, cmd_doctor, cmd_edit, cmd_fact, cmd_graph, cmd_init, cmd_list, cmd_locks,
+    cmd_locks_clear, cmd_logs, cmd_mcp_serve, cmd_memory_context, cmd_plan, cmd_quick, cmd_ready,
+    cmd_recall, cmd_release, cmd_reopen, cmd_run, cmd_show, cmd_stats, cmd_status, cmd_sync,
+    cmd_tidy, cmd_tree, cmd_trust, cmd_unarchive, cmd_update, cmd_verify, cmd_verify_facts,
 };
 use bn::discovery::find_beans_dir;
 use bn::index::Index;

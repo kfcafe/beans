@@ -292,16 +292,10 @@ fn build_prompt_text(
     // Build produces/requires context if present
     let mut dep_context = String::new();
     if !bean.produces.is_empty() {
-        dep_context.push_str(&format!(
-            "\nProduces: {}\n",
-            bean.produces.join(", ")
-        ));
+        dep_context.push_str(&format!("\nProduces: {}\n", bean.produces.join(", ")));
     }
     if !bean.requires.is_empty() {
-        dep_context.push_str(&format!(
-            "Requires: {}\n",
-            bean.requires.join(", ")
-        ));
+        dep_context.push_str(&format!("Requires: {}\n", bean.requires.join(", ")));
     }
 
     format!(
@@ -630,7 +624,7 @@ mod tests {
                 poll_interval: 30,
                 extends: vec![],
                 rules_file: None,
-            file_locking: false,
+                file_locking: false,
             },
             "42",
             &bean,
@@ -642,9 +636,18 @@ mod tests {
         assert!(prompt.contains("Decompose bean 42"), "missing header");
         assert!(prompt.contains("Implement auth system"), "missing title");
         assert!(prompt.contains("≤5 functions"), "missing sizing rules");
-        assert!(prompt.contains("Maximize parallelism"), "missing parallelism rule");
-        assert!(prompt.contains("Embed context"), "missing context embedding rule");
-        assert!(prompt.contains("verify command"), "missing verify requirement");
+        assert!(
+            prompt.contains("Maximize parallelism"),
+            "missing parallelism rule"
+        );
+        assert!(
+            prompt.contains("Embed context"),
+            "missing context embedding rule"
+        );
+        assert!(
+            prompt.contains("verify command"),
+            "missing verify requirement"
+        );
         assert!(prompt.contains("bn create"), "missing create syntax");
         assert!(prompt.contains("--parent 42"), "missing parent flag");
         assert!(prompt.contains("--produces"), "missing produces flag");
@@ -668,7 +671,7 @@ mod tests {
                 poll_interval: 30,
                 extends: vec![],
                 rules_file: None,
-            file_locking: false,
+                file_locking: false,
             },
             "1",
             &bean,
@@ -676,7 +679,10 @@ mod tests {
             Some("by-feature"),
         );
 
-        assert!(prompt.contains("vertical slice"), "missing feature strategy guidance");
+        assert!(
+            prompt.contains("vertical slice"),
+            "missing feature strategy guidance"
+        );
     }
 
     #[test]
@@ -698,7 +704,7 @@ mod tests {
                 poll_interval: 30,
                 extends: vec![],
                 rules_file: None,
-            file_locking: false,
+                file_locking: false,
             },
             "5",
             &bean,

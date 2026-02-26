@@ -6,11 +6,7 @@ use crate::bean::Bean;
 ///   score = path_overlap × 3 + dependency_match × 5 + recency × 1
 ///
 /// Higher score = more relevant.
-pub fn relevance_score(
-    bean: &Bean,
-    working_paths: &[String],
-    working_deps: &[String],
-) -> u32 {
+pub fn relevance_score(bean: &Bean, working_paths: &[String], working_deps: &[String]) -> u32 {
     let mut score = 0u32;
 
     // Path overlap: how many of the bean's paths overlap with working paths
@@ -107,11 +103,7 @@ mod tests {
         let mut bean = Bean::new("1", "Auth fact");
         bean.paths = vec!["src/auth.rs".to_string()];
 
-        let score = relevance_score(
-            &bean,
-            &["src/auth.rs".to_string()],
-            &[],
-        );
+        let score = relevance_score(&bean, &["src/auth.rs".to_string()], &[]);
         assert!(score >= 3); // path_overlap * 3
     }
 
@@ -120,11 +112,7 @@ mod tests {
         let mut bean = Bean::new("1", "Auth types");
         bean.produces = vec!["AuthProvider".to_string()];
 
-        let score = relevance_score(
-            &bean,
-            &[],
-            &["AuthProvider".to_string()],
-        );
+        let score = relevance_score(&bean, &[], &["AuthProvider".to_string()]);
         assert!(score >= 5); // dep_match * 5
     }
 

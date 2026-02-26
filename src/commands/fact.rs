@@ -131,17 +131,11 @@ pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
         total_facts += 1;
 
         // Check staleness
-        let is_stale = bean
-            .stale_after
-            .map(|sa| now > sa)
-            .unwrap_or(false);
+        let is_stale = bean.stale_after.map(|sa| now > sa).unwrap_or(false);
 
         if is_stale {
             stale_count += 1;
-            eprintln!(
-                "⚠ STALE: [{}] \"{}\"",
-                bean.id, bean.title
-            );
+            eprintln!("⚠ STALE: [{}] \"{}\"", bean.id, bean.title);
         }
 
         // Re-run verify command
@@ -171,10 +165,7 @@ pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
                 }
                 Err(e) => {
                     failing_count += 1;
-                    eprintln!(
-                        "  ✗ ERROR: [{}] \"{}\" — {}",
-                        bean.id, bean.title, e
-                    );
+                    eprintln!("  ✗ ERROR: [{}] \"{}\" — {}", bean.id, bean.title, e);
                 }
             }
         }
@@ -308,9 +299,6 @@ mod tests {
         );
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("verify command"));
+        assert!(result.unwrap_err().to_string().contains("verify command"));
     }
 }

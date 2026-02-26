@@ -79,8 +79,7 @@ pub fn acquire(beans_dir: &Path, bean_id: &str, pid: u32, file_path: &str) -> Re
         locked_at: chrono::Utc::now().timestamp(),
     };
 
-    let content = serde_json::to_string_pretty(&info)
-        .context("Failed to serialize lock info")?;
+    let content = serde_json::to_string_pretty(&info).context("Failed to serialize lock info")?;
 
     // Attempt atomic creation — retries once after cleaning a stale lock.
     for _ in 0..2 {
@@ -90,10 +89,9 @@ pub fn acquire(beans_dir: &Path, bean_id: &str, pid: u32, file_path: &str) -> Re
             .open(&lock_path)
         {
             Ok(mut file) => {
-                file.write_all(content.as_bytes())
-                    .with_context(|| {
-                        format!("Failed to write lock file: {}", lock_path.display())
-                    })?;
+                file.write_all(content.as_bytes()).with_context(|| {
+                    format!("Failed to write lock file: {}", lock_path.display())
+                })?;
                 return Ok(true);
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {

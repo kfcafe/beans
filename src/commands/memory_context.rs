@@ -183,11 +183,7 @@ pub fn cmd_memory_context(beans_dir: &Path, json: bool) -> Result<()> {
         }
     }
 
-    recent_work.sort_by(|a, b| {
-        b.closed_at
-            .unwrap_or(now)
-            .cmp(&a.closed_at.unwrap_or(now))
-    });
+    recent_work.sort_by(|a, b| b.closed_at.unwrap_or(now).cmp(&a.closed_at.unwrap_or(now)));
 
     // =========================================================================
     // Output

@@ -241,7 +241,10 @@ fn handle_list_beans(args: &Value, beans_dir: &Path) -> Result<String> {
         .and_then(|v| v.as_str())
         .and_then(crate::util::parse_status);
 
-    let priority_filter = args.get("priority").and_then(|v| v.as_u64()).map(|v| v as u8);
+    let priority_filter = args
+        .get("priority")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u8);
 
     let parent_filter = args.get("parent").and_then(|v| v.as_str());
 
@@ -345,7 +348,10 @@ fn handle_create_bean(args: &Value, beans_dir: &Path) -> Result<String> {
     let description = args.get("description").and_then(|v| v.as_str());
     let verify = args.get("verify").and_then(|v| v.as_str());
     let parent = args.get("parent").and_then(|v| v.as_str());
-    let priority = args.get("priority").and_then(|v| v.as_u64()).map(|v| v as u8);
+    let priority = args
+        .get("priority")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u8);
     let acceptance = args.get("acceptance").and_then(|v| v.as_str());
     let deps = args.get("deps").and_then(|v| v.as_str());
 
@@ -608,10 +614,7 @@ fn handle_context_bean(args: &Value, beans_dir: &Path) -> Result<String> {
     let paths = crate::ctx_assembler::extract_paths(description);
 
     if paths.is_empty() {
-        return Ok(format!(
-            "Bean {}: no file paths found in description",
-            id
-        ));
+        return Ok(format!("Bean {}: no file paths found in description", id));
     }
 
     let context = crate::ctx_assembler::assemble_context(paths, project_dir)
@@ -681,19 +684,12 @@ fn handle_tree(args: &Value, beans_dir: &Path) -> Result<String> {
         render_subtree(&index, root, "", true, &mut output);
     } else {
         // Find root beans (no parent)
-        let roots: Vec<&IndexEntry> = index
-            .beans
-            .iter()
-            .filter(|e| e.parent.is_none())
-            .collect();
+        let roots: Vec<&IndexEntry> = index.beans.iter().filter(|e| e.parent.is_none()).collect();
 
         for (i, root) in roots.iter().enumerate() {
             let is_last = i == roots.len() - 1;
             let status_icon = status_icon(root.status);
-            output.push_str(&format!(
-                "{} {} {}\n",
-                status_icon, root.id, root.title
-            ));
+            output.push_str(&format!("{} {} {}\n", status_icon, root.id, root.title));
             render_children(&index, &root.id, "  ", &mut output);
             if !is_last {
                 output.push('\n');
@@ -733,9 +729,11 @@ fn resolve_blocked(entry: &IndexEntry, index: &Index) -> Vec<String> {
 
     // Smart dependencies: requires vs sibling produces
     for required in &entry.requires {
-        if let Some(producer) = index.beans.iter().find(|e| {
-            e.id != entry.id && e.parent == entry.parent && e.produces.contains(required)
-        }) {
+        if let Some(producer) = index
+            .beans
+            .iter()
+            .find(|e| e.id != entry.id && e.parent == entry.parent && e.produces.contains(required))
+        {
             if producer.status != Status::Closed && !blocked_by.contains(&producer.id) {
                 blocked_by.push(producer.id.clone());
             }
@@ -814,7 +812,10 @@ fn status_icon(status: Status) -> &'static str {
 fn render_subtree(index: &Index, id: &str, prefix: &str, _is_last: bool, output: &mut String) {
     if let Some(entry) = index.beans.iter().find(|e| e.id == id) {
         let icon = status_icon(entry.status);
-        output.push_str(&format!("{}{} {} {}\n", prefix, icon, entry.id, entry.title));
+        output.push_str(&format!(
+            "{}{} {} {}\n",
+            prefix, icon, entry.id, entry.title
+        ));
         render_children(index, id, &format!("{}  ", prefix), output);
     }
 }
@@ -828,7 +829,10 @@ fn render_children(index: &Index, parent_id: &str, prefix: &str, output: &mut St
 
     for child in &children {
         let icon = status_icon(child.status);
-        output.push_str(&format!("{}{} {} {}\n", prefix, icon, child.id, child.title));
+        output.push_str(&format!(
+            "{}{} {} {}\n",
+            prefix, icon, child.id, child.title
+        ));
         render_children(index, &child.id, &format!("{}  ", prefix), output);
     }
 }

@@ -251,9 +251,11 @@ pub struct Bean {
     pub max_loops: Option<u32>,
 
     // -- Memory system fields --
-
     /// Bean type: 'task' (default) or 'fact' (verified knowledge).
-    #[serde(default = "default_bean_type", skip_serializing_if = "is_default_bean_type")]
+    #[serde(
+        default = "default_bean_type",
+        skip_serializing_if = "is_default_bean_type"
+    )]
     pub bean_type: String,
 
     /// Unix timestamp of last successful verify (for staleness detection).
