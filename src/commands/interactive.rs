@@ -260,6 +260,7 @@ pub fn interactive_create(beans_dir: &Path, prefill: Prefill) -> Result<CreateAr
         pass_ok,
         claim: false,
         by: None,
+        verify_timeout: None,
     })
 }
 

@@ -1,5 +1,8 @@
 /target
 
+# File lock used by bn for concurrent index access
+.beans/index.lock
+
 # macOS
 .DS_Store
 .AppleDouble

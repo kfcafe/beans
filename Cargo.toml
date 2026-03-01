@@ -1,17 +1,43 @@
 [package]
-name = "bn"
-version = "0.2.0"
+name = "beans-cli"
+version = "0.4.0"
 edition = "2021"
 description = "Task tracker for coding agents"
 license = "Apache-2.0"
 repository = "https://github.com/opus-workshop/beans"
+homepage = "https://github.com/opus-workshop/beans"
+readme = "README.md"
+keywords = ["cli", "task-tracker", "agents", "coding"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    ".beans/",
+    ".claude/",
+    ".github/",
+    ".pi/",
+    ".vibecheck/",
+    "biome.json",
+    "tools/",
+    "VIBECHECK.md",
+    "VIBES.md",
+    "DESIGN-bean-run-native.md",
+]
+
+[lib]
+name = "bn"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bn"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 dialoguer = { version = "0.11", features = ["editor", "fuzzy-select"] }
 dirs = "5"
+fs2 = "0.4"
 glob = "0.3"
 libc = "0.2"
 regex = "1"

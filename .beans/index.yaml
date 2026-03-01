@@ -1,137 +1,40 @@
 beans:
-- id: '11'
-  title: 'Verify-on-claim: run verify before granting claim'
-  status: open
-  priority: 2
-  updated_at: 2026-02-23T23:35:43.635274Z
-  has_verify: true
-  attempts: 0
 - id: '12'
   title: 'Spro sandboxing: git worktrees for parallel agents'
   status: open
   priority: 2
   dependencies:
   - '11'
-  updated_at: 2026-02-03T03:21:51.875721Z
-  has_verify: true
-  attempts: 0
-- id: '12.1'
-  title: Implement git worktree isolation in spro spawn
-  status: open
-  priority: 2
-  parent: '12'
-  updated_at: 2026-02-23T23:35:43.646391Z
-  has_verify: true
-  attempts: 0
-- id: '12.3'
-  title: Add worktree merge to bn close
-  status: open
-  priority: 2
-  parent: '12'
-  dependencies:
-  - '11'
-  updated_at: 2026-02-03T07:27:36.906627Z
-  has_verify: true
-  attempts: 0
-- id: 12.3.3
-  title: Integrate worktree merge into bn close
-  status: open
-  priority: 2
-  parent: '12.3'
-  updated_at: 2026-02-05T18:18:36.486055Z
-  has_verify: true
-  attempts: 0
-- id: 12.3.3.1
-  title: Add worktree merge handling to cmd_close
-  status: open
-  priority: 1
-  parent: 12.3.3
-  updated_at: 2026-02-23T23:35:43.653125Z
-  has_verify: true
-  attempts: 0
-- id: 12.3.3.2
-  title: Add worktree merge integration tests for close
-  status: open
-  priority: 2
-  parent: 12.3.3
-  updated_at: 2026-02-23T23:35:43.659561Z
-  has_verify: true
-  attempts: 0
-- id: '41'
-  title: Beans Memory System
-  status: open
-  priority: 2
-  updated_at: 2026-02-05T18:47:19.828248Z
-  has_verify: true
-  attempts: 0
-- id: '75'
-  title: 'Project rules: .beans/RULES.md convention'
-  status: open
-  priority: 2
-  updated_at: 2026-02-23T12:13:10.047614Z
-  has_verify: true
-  attempts: 0
-- id: '76'
-  title: 'MCP server: expose beans as MCP tools'
-  status: open
-  priority: 2
-  updated_at: 2026-02-23T12:13:30.494728Z
-  has_verify: true
-  attempts: 0
-- id: '77'
-  title: Post-close and on-fail hooks
-  status: open
-  priority: 2
-  updated_at: 2026-02-23T12:13:50.588573Z
+  updated_at: '2026-02-03T03:21:51.875721Z'
   has_verify: true
   attempts: 0
 - id: '78'
   title: Worktree isolation for parallel agents
   status: open
   priority: 2
-  updated_at: 2026-02-23T12:14:09.908279Z
+  updated_at: '2026-02-23T12:14:09.908279Z'
   has_verify: true
   attempts: 0
 - id: '79'
   title: Gitignore index.yaml — treat as local cache
   status: open
   priority: 2
-  updated_at: 2026-02-23T12:51:53.142977Z
+  updated_at: '2026-02-23T12:51:53.142977Z'
   has_verify: true
   attempts: 0
 - id: '80'
   title: 'Identity model: bn config set user'
   status: open
   priority: 2
-  updated_at: 2026-02-23T12:52:08.498902Z
+  updated_at: '2026-02-23T12:52:08.498902Z'
   has_verify: true
   attempts: 0
 - id: '84'
   title: 'Codebase improvements: robustness, DX, and maintainability'
   status: open
   priority: 2
-  updated_at: 2026-02-24T06:48:10.784339Z
+  updated_at: '2026-02-24T06:48:10.784339Z'
   has_verify: false
-  attempts: 0
-- id: '84.1'
-  title: File locking for index.yaml
-  status: open
-  priority: 0
-  parent: '84'
-  updated_at: 2026-02-24T06:49:05.061886Z
-  produces:
-  - FileLocking
-  has_verify: true
-  attempts: 0
-- id: '84.2'
-  title: Atomic file writes for beans and index
-  status: open
-  priority: 0
-  parent: '84'
-  updated_at: 2026-02-24T06:49:21.423264Z
-  produces:
-  - AtomicWrites
-  has_verify: true
   attempts: 0
 - id: '84.3'
   title: Signal handling for bn run (clean agent shutdown)
@@ -140,25 +43,9 @@ beans:
   parent: '84'
   dependencies:
   - '84.1'
-  updated_at: 2026-02-24T06:51:19.189172Z
+  updated_at: '2026-02-24T06:51:19.189172Z'
   produces:
   - SignalHandling
-  has_verify: true
-  attempts: 0
-- id: '84.4'
-  title: 'CI pipeline: GitHub Actions for test + clippy'
-  status: open
-  priority: 1
-  parent: '84'
-  updated_at: 2026-02-24T06:49:38.660462Z
-  has_verify: true
-  attempts: 0
-- id: '84.5'
-  title: Shell completions via clap_complete
-  status: open
-  priority: 1
-  parent: '84'
-  updated_at: 2026-02-24T06:49:47.302994Z
   has_verify: true
   attempts: 0
 - id: '84.6'
@@ -166,15 +53,7 @@ beans:
   status: open
   priority: 2
   parent: '84'
-  updated_at: 2026-02-24T06:49:59.208034Z
-  has_verify: true
-  attempts: 0
-- id: '84.7'
-  title: Migrate from serde_yaml (deprecated) to serde_yml or yaml-rust2
-  status: open
-  priority: 1
-  parent: '84'
-  updated_at: 2026-02-24T06:50:08.661946Z
+  updated_at: '2026-02-24T06:49:59.208034Z'
   has_verify: true
   attempts: 0
 - id: '84.8'
@@ -182,7 +61,7 @@ beans:
   status: open
   priority: 2
   parent: '84'
-  updated_at: 2026-02-24T06:50:20.399525Z
+  updated_at: '2026-02-24T06:50:20.399525Z'
   has_verify: true
   attempts: 0
 - id: '84.9'
@@ -192,7 +71,7 @@ beans:
   parent: '84'
   dependencies:
   - '84.6'
-  updated_at: 2026-02-24T06:51:19.200156Z
+  updated_at: '2026-02-24T06:51:19.200156Z'
   has_verify: true
   attempts: 0
 - id: '84.10'
@@ -202,7 +81,7 @@ beans:
   parent: '84'
   dependencies:
   - '84.9'
-  updated_at: 2026-02-24T06:51:19.209099Z
+  updated_at: '2026-02-24T06:51:19.209099Z'
   has_verify: true
   attempts: 0
 - id: '84.11'
@@ -210,7 +89,7 @@ beans:
   status: open
   priority: 2
   parent: '84'
-  updated_at: 2026-02-24T06:50:46.761911Z
+  updated_at: '2026-02-24T06:50:46.761911Z'
   has_verify: true
   attempts: 0
 - id: '84.12'
@@ -218,7 +97,7 @@ beans:
   status: open
   priority: 3
   parent: '84'
-  updated_at: 2026-02-24T06:50:53.001081Z
+  updated_at: '2026-02-24T06:50:53.001081Z'
   has_verify: true
   attempts: 0
 - id: '84.13'
@@ -226,6 +105,663 @@ beans:
   status: open
   priority: 2
   parent: '84'
-  updated_at: 2026-02-24T06:51:01.814467Z
+  updated_at: '2026-02-24T06:51:01.814467Z'
   has_verify: true
+  attempts: 0
+- id: '89'
+  title: 'Vibecheck: Improvements (2026-02-27 04:45)'
+  status: open
+  priority: 2
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.160639Z'
+  has_verify: true
+  attempts: 0
+- id: '89.1'
+  title: 'Vibecheck: Improve src/commands/close.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.175497Z'
+  has_verify: true
+  attempts: 0
+- id: '89.2'
+  title: 'Vibecheck: Improve src/commands/run.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.185005Z'
+  has_verify: true
+  attempts: 0
+- id: '89.3'
+  title: 'Vibecheck: Improve src/main.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.195431Z'
+  has_verify: true
+  attempts: 0
+- id: '89.4'
+  title: 'Vibecheck: Improve src/bean.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.206426Z'
+  has_verify: true
+  attempts: 0
+- id: '89.5'
+  title: 'Vibecheck: Improve src/mcp/tools.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.216820Z'
+  has_verify: true
+  attempts: 0
+- id: '89.6'
+  title: 'Vibecheck: Improve src/config.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.228957Z'
+  has_verify: true
+  attempts: 0
+- id: '89.7'
+  title: 'Vibecheck: Improve src/commands/claim.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.240705Z'
+  has_verify: true
+  attempts: 0
+- id: '89.8'
+  title: 'Vibecheck: Improve src/locks.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.252574Z'
+  has_verify: true
+  attempts: 0
+- id: '89.9'
+  title: 'Vibecheck: Improve src/spawner.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.263502Z'
+  has_verify: true
+  attempts: 0
+- id: '89.10'
+  title: 'Vibecheck: Improve src/discovery.rs'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.273204Z'
+  has_verify: true
+  attempts: 0
+- id: '89.11'
+  title: 'Vibecheck: Triage remaining issues (7 files)'
+  status: open
+  priority: 2
+  parent: '89'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:11.281858Z'
+  has_verify: true
+  attempts: 0
+- id: '90'
+  title: 'Vibecheck: Improvements (2026-02-27 04:45)'
+  status: open
+  priority: 2
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.486898Z'
+  has_verify: true
+  attempts: 0
+- id: '90.1'
+  title: 'Vibecheck: Improve src/commands/run.rs'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.500182Z'
+  has_verify: true
+  attempts: 0
+- id: '90.2'
+  title: 'Vibecheck: Improve src/commands/close.rs'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.508960Z'
+  has_verify: true
+  attempts: 0
+- id: '90.3'
+  title: 'Vibecheck: Improve src/config.rs'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.521712Z'
+  has_verify: true
+  attempts: 0
+- id: '90.4'
+  title: 'Vibecheck: Improve src/bean.rs'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.531123Z'
+  has_verify: true
+  attempts: 0
+- id: '90.5'
+  title: 'Vibecheck: Improve src/mcp/tools.rs'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.539275Z'
+  has_verify: true
+  attempts: 0
+- id: '90.6'
+  title: 'Vibecheck: Improve src/main.rs'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.547377Z'
+  has_verify: true
+  attempts: 0
+- id: '90.7'
+  title: 'Vibecheck: Improve src/commands/create.rs'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.555948Z'
+  has_verify: true
+  attempts: 0
+- id: '90.8'
+  title: 'Vibecheck: Improve src/commands/tidy.rs'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.565136Z'
+  has_verify: true
+  attempts: 0
+- id: '90.9'
+  title: 'Vibecheck: Improve Cargo.toml'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.576017Z'
+  has_verify: true
+  attempts: 0
+- id: '90.10'
+  title: 'Vibecheck: Improve src/commands/mod.rs'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.585593Z'
+  has_verify: true
+  attempts: 0
+- id: '90.11'
+  title: 'Vibecheck: Triage remaining issues (3 files)'
+  status: open
+  priority: 2
+  parent: '90'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:30.594017Z'
+  has_verify: true
+  attempts: 0
+- id: '91'
+  title: 'Vibecheck: Improvements (2026-02-27 04:45)'
+  status: open
+  priority: 2
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.826836Z'
+  has_verify: true
+  attempts: 0
+- id: '91.1'
+  title: 'Vibecheck: Improve src/mcp/tools.rs'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.845018Z'
+  has_verify: true
+  attempts: 0
+- id: '91.2'
+  title: 'Vibecheck: Improve src/commands/close.rs'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.854158Z'
+  has_verify: true
+  attempts: 0
+- id: '91.3'
+  title: 'Vibecheck: Improve src/commands/run.rs'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.862143Z'
+  has_verify: true
+  attempts: 0
+- id: '91.4'
+  title: 'Vibecheck: Improve src/bean.rs'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.870405Z'
+  has_verify: true
+  attempts: 0
+- id: '91.5'
+  title: 'Vibecheck: Improve src/config.rs'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.878584Z'
+  has_verify: true
+  attempts: 0
+- id: '91.6'
+  title: 'Vibecheck: Improve src/spawner.rs'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.886863Z'
+  has_verify: true
+  attempts: 0
+- id: '91.7'
+  title: 'Vibecheck: Improve src/mcp/server.rs'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.895488Z'
+  has_verify: true
+  attempts: 0
+- id: '91.8'
+  title: 'Vibecheck: Improve src/main.rs'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.905655Z'
+  has_verify: true
+  attempts: 0
+- id: '91.9'
+  title: 'Vibecheck: Improve src/commands/agents.rs'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.913543Z'
+  has_verify: true
+  attempts: 0
+- id: '91.10'
+  title: 'Vibecheck: Improve Cargo.toml'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.922716Z'
+  has_verify: true
+  attempts: 0
+- id: '91.11'
+  title: 'Vibecheck: Triage remaining issues (3 files)'
+  status: open
+  priority: 2
+  parent: '91'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:45:57.932755Z'
+  has_verify: true
+  attempts: 0
+- id: '92'
+  title: 'Vibecheck: Improvements (2026-02-27 04:46)'
+  status: open
+  priority: 2
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.710643Z'
+  has_verify: true
+  attempts: 0
+- id: '92.1'
+  title: 'Vibecheck: Improve src/commands/close.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.728300Z'
+  has_verify: true
+  attempts: 0
+- id: '92.2'
+  title: 'Vibecheck: Improve src/commands/run.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.737205Z'
+  has_verify: true
+  attempts: 0
+- id: '92.3'
+  title: 'Vibecheck: Improve src/bean.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.746481Z'
+  has_verify: true
+  attempts: 0
+- id: '92.4'
+  title: 'Vibecheck: Improve src/main.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.755403Z'
+  has_verify: true
+  attempts: 0
+- id: '92.5'
+  title: 'Vibecheck: Improve src/mcp/tools.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.763585Z'
+  has_verify: true
+  attempts: 0
+- id: '92.6'
+  title: 'Vibecheck: Improve src/config.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.772749Z'
+  has_verify: true
+  attempts: 0
+- id: '92.7'
+  title: 'Vibecheck: Improve src/spawner.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.780734Z'
+  has_verify: true
+  attempts: 0
+- id: '92.8'
+  title: 'Vibecheck: Improve src/commands/tidy.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.788349Z'
+  has_verify: true
+  attempts: 0
+- id: '92.9'
+  title: 'Vibecheck: Improve src/commands/create.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.796402Z'
+  has_verify: true
+  attempts: 0
+- id: '92.10'
+  title: 'Vibecheck: Improve src/index.rs'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.805202Z'
+  has_verify: true
+  attempts: 0
+- id: '92.11'
+  title: 'Vibecheck: Triage remaining issues (5 files)'
+  status: open
+  priority: 2
+  parent: '92'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T04:46:59.813298Z'
+  has_verify: true
+  attempts: 0
+- id: '94'
+  title: 'refactor: Split commands/close.rs into a module directory'
+  status: open
+  priority: 2
+  updated_at: '2026-02-27T05:22:12.571827Z'
+  has_verify: true
+  attempts: 0
+- id: '95'
+  title: 'refactor: Split bean.rs into a module directory'
+  status: open
+  priority: 2
+  updated_at: '2026-02-27T05:22:29.442936Z'
+  has_verify: true
+  attempts: 0
+- id: '96'
+  title: 'refactor: Split commands/create.rs into a module directory'
+  status: open
+  priority: 2
+  updated_at: '2026-02-27T05:22:37.867090Z'
+  has_verify: true
+  attempts: 0
+- id: '102'
+  title: 'Vibecheck: Improvements (2026-02-27 08:22)'
+  status: open
+  priority: 2
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.035520Z'
+  has_verify: true
+  attempts: 0
+- id: '102.1'
+  title: 'Vibecheck: Improve src/mcp/tools.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.070369Z'
+  has_verify: true
+  attempts: 0
+- id: '102.2'
+  title: 'Vibecheck: Improve src/commands/close.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.096220Z'
+  has_verify: true
+  attempts: 0
+- id: '102.3'
+  title: 'Vibecheck: Improve src/hooks.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.121320Z'
+  has_verify: true
+  attempts: 0
+- id: '102.4'
+  title: 'Vibecheck: Improve src/main.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.144398Z'
+  has_verify: true
+  attempts: 0
+- id: '102.5'
+  title: 'Vibecheck: Improve src/spawner.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.168314Z'
+  has_verify: true
+  attempts: 0
+- id: '102.6'
+  title: 'Vibecheck: Improve src/config.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.192942Z'
+  has_verify: true
+  attempts: 0
+- id: '102.7'
+  title: 'Vibecheck: Improve src/bean.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.218082Z'
+  has_verify: true
+  attempts: 0
+- id: '102.8'
+  title: 'Vibecheck: Improve src/commands/run/mod.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.241662Z'
+  has_verify: true
+  attempts: 0
+- id: '102.9'
+  title: 'Vibecheck: Improve src/mcp/server.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.265987Z'
+  has_verify: true
+  attempts: 0
+- id: '102.10'
+  title: 'Vibecheck: Improve src/api/mod.rs'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.291243Z'
+  has_verify: true
+  attempts: 0
+- id: '102.11'
+  title: 'Vibecheck: Triage remaining issues (9 files)'
+  status: open
+  priority: 2
+  parent: '102'
+  labels:
+  - vibecheck
+  updated_at: '2026-02-27T08:22:15.315336Z'
+  has_verify: true
+  attempts: 0
+- id: '103'
+  title: 'HN-inspired features: race, review, stats, trace, accumulated knowledge'
+  status: open
+  priority: 1
+  labels:
+  - feature
+  - hn-inspired
+  updated_at: '2026-02-28T21:42:21.803808Z'
+  has_verify: true
+  attempts: 0
+- id: '103.3'
+  title: 'Review: bn run --review and bn review for adversarial post-close review'
+  status: in_progress
+  priority: 2
+  parent: '103'
+  dependencies:
+  - '103.1'
+  updated_at: '2026-03-01T09:35:05.171404Z'
+  has_verify: true
+  claimed_by: pi-agent
+  attempts: 0
+- id: '103.5'
+  title: 'Verify timeout: kill verify command if it exceeds time limit'
+  status: in_progress
+  priority: 2
+  parent: '103'
+  updated_at: '2026-03-01T09:23:23.405544Z'
+  has_verify: true
+  claimed_by: pi-agent
+  attempts: 0
+- id: '103.7'
+  title: 'Codebase context enrichment: add AST structure summary to bn context'
+  status: in_progress
+  priority: 2
+  parent: '103'
+  dependencies:
+  - '103.1'
+  updated_at: '2026-03-01T09:35:45.355140Z'
+  has_verify: true
+  claimed_by: pi-agent
   attempts: 0

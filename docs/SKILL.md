@@ -252,6 +252,90 @@ bn verify 3 --json   # {"id":"3","passed":false}
 bn context 3 --json  # {"id":"3","files":[{"path":"...","content":"..."}]}
 ```
 
+## Memory System
+
+Beans doubles as a verified knowledge graph. Tasks and facts share the same data structure with different lifecycles.
+
+### Knowledge Types
+
+| Type | Command | Verification |
+|------|---------|--------------|
+| Verifiable facts | `bn fact` | **Required** — that's the point |
+| Unverifiable knowledge | `agents.md` | None — prose, conventions, preferences |
+| Tasks | `bn create` | Required — completion gate |
+
+**If you can't write a verify command, it's not a fact — it belongs in agents.md.**
+
+### Creating Facts
+
+Facts are verified truths about the project that persist across sessions:
+
+```bash
+bn fact "API uses Axum 0.8" --verify "grep -q 'axum = \"0.8' Cargo.toml"
+bn fact "Auth tokens expire after 24h" --verify "grep -q '24 * 60' src/config.rs"
+bn fact "Tests require Docker" --verify "docker info >/dev/null 2>&1" --ttl 90
+bn fact "Session format is JWT" --verify "grep -q JWT src/auth.rs" --paths "src/auth.rs"
+```
+
+Facts have a TTL (default 30 days). When stale, they appear as warnings in `bn context`.
+
+### Memory Context
+
+Run `bn context` without arguments to get session-start memory:
+
+```bash
+bn context          # Human-readable memory context
+bn context --json   # Machine-readable
+```
+
+Output sections (priority order):
+1. **⚠ WARNINGS** — stale facts, past failures (never truncated)
+2. **► WORKING ON** — claimed beans with attempt history
+3. **✓ RELEVANT FACTS** — scored by path overlap and dependencies
+4. **◷ RECENT WORK** — closed beans from last 7 days
+
+### Searching Memory
+
+```bash
+bn recall "auth"           # Search open beans
+bn recall "JWT" --all      # Include closed/archived
+bn recall "login" --json   # Machine-readable results
+```
+
+Searches titles, descriptions, notes, close reasons, paths, labels, and attempt notes.
+
+### Verifying Facts
+
+Re-check all facts and detect staleness:
+
+```bash
+bn verify-facts
+```
+
+This re-runs every fact's verify command, resets TTLs for passing facts, and reports:
+- **STALE** facts past their TTL
+- **FAILING** facts whose verify commands return non-zero
+- **SUSPECT** facts that depend on artifacts from invalid facts (propagated up to depth 3)
+
+### Attempt Tracking
+
+Every claim→close cycle is tracked as an attempt:
+
+- `bn claim <id>` — starts a new attempt
+- `bn close <id>` — records success
+- `bn close --failed <id> --reason "why"` — records failure, releases claim for retry
+- `bn claim <id> --release` — records abandoned attempt
+
+Failed attempts surface in `bn context` as warnings, preventing agents from repeating mistakes.
+
+```bash
+# Agent gives up explicitly
+bn close --failed 5 --reason "JWT lib incompatible with runtime"
+
+# Next agent sees the warning in bn context:
+# ⚠ PAST FAILURE [5]: "JWT lib incompatible with runtime"
+```
+
 ## Command Reference
 
 | Command | Purpose |
@@ -263,11 +347,16 @@ bn context 3 --json  # {"id":"3","files":[{"path":"...","content":"..."}]}
 | `bn claim <id>` | Claim a task |
 | `bn show <id>` | Full bean details (the prompt) |
 | `bn context <id>` | Files referenced in description (`--json`) |
+| `bn context` | Memory context (stale facts, in-progress, recent) |
 | `bn verify <id>` | Test verify without closing (`--json`) |
 | `bn close <id>` | Close (verify must pass, `--stdin` for batch) |
 | `bn close <id> --force` | Force close (skip verify) |
+| `bn close --failed <id>` | Mark attempt as failed (release for retry) |
 | `bn update <id> --note "..."` | Log progress (`--description -` reads stdin) |
 | `bn claim <id> --release` | Release claim |
+| `bn fact "..." --verify "..."` | Create a verified fact |
+| `bn recall "query"` | Search beans by keyword |
+| `bn verify-facts` | Re-verify all facts, detect staleness |
 | `bn run [id] [-j N]` | Dispatch ready beans to agents |
 | `bn run --watch` | Watch mode: auto-dispatch on changes |
 | `bn plan [id] [--auto]` | Decompose a large bean into children |

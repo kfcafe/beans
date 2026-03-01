@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::util::validate_bean_id;
+use crate::util::{atomic_write, validate_bean_id};
 
 // ---------------------------------------------------------------------------
 // Status
@@ -190,6 +190,10 @@ pub struct Bean {
     /// Records that the verify command was proven to fail before creation.
     #[serde(default, skip_serializing_if = "is_false")]
     pub fail_first: bool,
+    /// Git commit SHA recorded when verify was proven to fail at claim time.
+    /// Proves the test was meaningful at the point work began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<String>,
     /// How many times the verify command has been run.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub attempts: u32,
@@ -249,6 +253,11 @@ pub struct Bean {
     /// Maximum agent loops for this bean (overrides config default, 0 = unlimited).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_loops: Option<u32>,
+
+    /// Timeout in seconds for the verify command (overrides config default).
+    /// If the verify command exceeds this limit, it is killed and treated as failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify_timeout: Option<u64>,
 
     // -- Memory system fields --
     /// Bean type: 'task' (default) or 'fact' (verified knowledge).
@@ -332,6 +341,7 @@ impl Bean {
             dependencies: Vec::new(),
             verify: None,
             fail_first: false,
+            checkpoint: None,
             attempts: 0,
             max_attempts: 3,
             claimed_by: None,
@@ -346,6 +356,7 @@ impl Bean {
             history: Vec::new(),
             outputs: None,
             max_loops: None,
+            verify_timeout: None,
             bean_type: "task".to_string(),
             last_verified: None,
             stale_after: None,
@@ -364,6 +375,11 @@ impl Bean {
     /// A value of 0 means unlimited.
     pub fn effective_max_loops(&self, config_max: u32) -> u32 {
         self.max_loops.unwrap_or(config_max)
+    }
+
+    /// Get effective verify_timeout: bean-level override, then config default, then None.
+    pub fn effective_verify_timeout(&self, config_timeout: Option<u64>) -> Option<u64> {
+        self.verify_timeout.or(config_timeout)
     }
 
     /// Parse YAML frontmatter and markdown body.
@@ -462,10 +478,10 @@ impl Bean {
                     content.push('\n');
                 }
             }
-            std::fs::write(path, content)?;
+            atomic_write(path, &content)?;
         } else {
             let yaml = serde_yml::to_string(self)?;
-            std::fs::write(path, yaml)?;
+            atomic_write(path, &yaml)?;
         }
         Ok(())
     }
@@ -586,6 +602,7 @@ mod tests {
             dependencies: vec!["3.1".to_string()],
             verify: Some("cargo test".to_string()),
             fail_first: false,
+            checkpoint: None,
             attempts: 1,
             max_attempts: 5,
             claimed_by: Some("agent-7".to_string()),
@@ -607,6 +624,7 @@ mod tests {
                     message: "Task complete".to_string(),
                 },
             ],
+            verify_timeout: None,
             history: Vec::new(),
             outputs: Some(serde_json::json!({"key": "value"})),
             max_loops: None,

@@ -69,7 +69,7 @@ fn read_status_resource(beans_dir: &Path) -> Result<Vec<ResourceContent>> {
                             .beans
                             .iter()
                             .find(|e| &e.id == dep_id)
-                            .map_or(true, |e| e.status != crate::bean::Status::Closed)
+                            .is_none_or(|e| e.status != crate::bean::Status::Closed)
                     });
                     if is_blocked {
                         blocked += 1;

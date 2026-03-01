@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::bean::{Bean, Status};
-use crate::util::natural_cmp;
+use crate::util::{atomic_write, natural_cmp};
 
 // ---------------------------------------------------------------------------
 // IndexEntry
@@ -255,7 +257,7 @@ impl Index {
     pub fn save(&self, beans_dir: &Path) -> Result<()> {
         let index_path = beans_dir.join("index.yaml");
         let yaml = serde_yml::to_string(self).with_context(|| "Failed to serialize index")?;
-        fs::write(&index_path, yaml)
+        atomic_write(&index_path, &yaml)
             .with_context(|| format!("Failed to write {}", index_path.display()))?;
         Ok(())
     }
@@ -305,6 +307,99 @@ impl Index {
         }
 
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LockedIndex — exclusive access during read-modify-write
+// ---------------------------------------------------------------------------
+
+/// Default timeout for acquiring the index lock.
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Exclusive handle to the index, backed by an advisory flock on `.beans/index.lock`.
+///
+/// Prevents concurrent read-modify-write races when multiple agents run in parallel.
+/// The lock is held from acquisition until `save_and_release` is called or the
+/// `LockedIndex` is dropped.
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # use std::path::Path;
+/// # fn example(beans_dir: &Path) -> Result<()> {
+/// use bn::index::LockedIndex;
+/// let mut locked = LockedIndex::acquire(beans_dir)?;
+/// locked.index.beans[0].title = "Updated".to_string();
+/// locked.save_and_release()?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct LockedIndex {
+    pub index: Index,
+    lock_file: fs::File,
+    beans_dir: std::path::PathBuf,
+}
+
+impl LockedIndex {
+    /// Acquire an exclusive lock on the index, then load or rebuild it.
+    /// Uses the default 5-second timeout.
+    pub fn acquire(beans_dir: &Path) -> Result<Self> {
+        Self::acquire_with_timeout(beans_dir, LOCK_TIMEOUT)
+    }
+
+    /// Acquire an exclusive lock with a custom timeout.
+    pub fn acquire_with_timeout(beans_dir: &Path, timeout: Duration) -> Result<Self> {
+        let lock_path = beans_dir.join("index.lock");
+        let lock_file = fs::File::create(&lock_path)
+            .with_context(|| format!("Failed to create lock file: {}", lock_path.display()))?;
+
+        Self::flock_with_timeout(&lock_file, timeout)?;
+
+        let index = Index::load_or_rebuild(beans_dir)?;
+
+        Ok(Self {
+            index,
+            lock_file,
+            beans_dir: beans_dir.to_path_buf(),
+        })
+    }
+
+    /// Save the modified index and release the lock.
+    pub fn save_and_release(self) -> Result<()> {
+        self.index.save(&self.beans_dir)?;
+        // self drops here, releasing the flock via Drop
+        Ok(())
+    }
+
+    /// Poll for an exclusive flock with timeout.
+    fn flock_with_timeout(file: &fs::File, timeout: Duration) -> Result<()> {
+        let start = Instant::now();
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(()),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if start.elapsed() >= timeout {
+                        return Err(anyhow!(
+                            "Timed out after {}s waiting for .beans/index.lock — \
+                             another bn process may be running. \
+                             If no other process is active, delete .beans/index.lock and retry.",
+                            timeout.as_secs()
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => {
+                    return Err(anyhow!("Failed to acquire index lock: {}", e));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for LockedIndex {
+    fn drop(&mut self) {
+        let _ = self.lock_file.unlock();
     }
 }
 
@@ -566,6 +661,64 @@ mod tests {
 
         let index = Index::build(&beans_dir).unwrap();
         assert!(index.beans.is_empty());
+    }
+
+    // -- LockedIndex tests --
+
+    #[test]
+    fn locked_index_acquire_and_save() {
+        let (_dir, beans_dir) = setup_beans_dir();
+
+        let mut locked = LockedIndex::acquire(&beans_dir).unwrap();
+        assert_eq!(locked.index.beans.len(), 4);
+
+        // Modify a title
+        locked.index.beans[0].title = "Modified".to_string();
+        locked.save_and_release().unwrap();
+
+        // Verify the change persisted
+        let index = Index::load(&beans_dir).unwrap();
+        assert_eq!(index.beans[0].title, "Modified");
+    }
+
+    #[test]
+    fn locked_index_blocks_concurrent_access() {
+        let (_dir, beans_dir) = setup_beans_dir();
+
+        // First lock
+        let _locked = LockedIndex::acquire(&beans_dir).unwrap();
+
+        // Second lock should fail with timeout
+        let result = LockedIndex::acquire_with_timeout(&beans_dir, Duration::from_millis(200));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Timed out"),
+            "Expected timeout error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn locked_index_released_on_drop() {
+        let (_dir, beans_dir) = setup_beans_dir();
+
+        {
+            let _locked = LockedIndex::acquire(&beans_dir).unwrap();
+            // lock held in this scope
+        }
+        // lock released on drop
+
+        // Should be able to acquire again
+        let _locked = LockedIndex::acquire(&beans_dir).unwrap();
+    }
+
+    #[test]
+    fn locked_index_creates_lock_file() {
+        let (_dir, beans_dir) = setup_beans_dir();
+
+        let _locked = LockedIndex::acquire(&beans_dir).unwrap();
+        assert!(beans_dir.join("index.lock").exists());
     }
 
     // -- is_stale ignores non-yaml files --

@@ -287,6 +287,11 @@ pub fn cmd_init(path: Option<&Path>, args: InitArgs) -> Result<()> {
         extends: vec![],
         rules_file: None,
         file_locking: false,
+        on_close: None,
+        on_fail: None,
+        post_plan: None,
+        verify_timeout: None,
+        review: None,
     };
 
     config.save(&beans_dir)?;
@@ -676,6 +681,37 @@ mod tests {
         for (preset, _) in &agents {
             assert!(PRESETS.iter().any(|p| p.name == preset.name));
         }
+    }
+
+    #[test]
+    fn init_creates_rules_md_stub() {
+        let dir = TempDir::new().unwrap();
+        cmd_init(Some(dir.path()), default_args()).unwrap();
+
+        let rules_path = dir.path().join(".beans").join("RULES.md");
+        assert!(rules_path.exists(), "RULES.md should be created by init");
+
+        let content = fs::read_to_string(&rules_path).unwrap();
+        assert!(content.contains("# Project Rules"));
+    }
+
+    #[test]
+    fn init_does_not_overwrite_existing_rules_md() {
+        let dir = TempDir::new().unwrap();
+        cmd_init(Some(dir.path()), default_args()).unwrap();
+
+        // Overwrite RULES.md with custom content
+        let rules_path = dir.path().join(".beans").join("RULES.md");
+        fs::write(&rules_path, "# Custom rules\nNo panics allowed.").unwrap();
+
+        // Re-init with --setup
+        let mut args = default_args();
+        args.setup = true;
+        cmd_init(Some(dir.path()), args).unwrap();
+
+        // Custom content preserved
+        let content = fs::read_to_string(&rules_path).unwrap();
+        assert!(content.contains("No panics allowed."));
     }
 
     #[test]

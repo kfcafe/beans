@@ -38,6 +38,8 @@ pub struct CreateArgs {
     pub claim: bool,
     /// Who is claiming (used with claim)
     pub by: Option<String>,
+    /// Timeout in seconds for the verify command (kills process on expiry).
+    pub verify_timeout: Option<u64>,
 }
 
 /// Assign a child ID for a parent bean.
@@ -280,6 +282,11 @@ pub fn cmd_create(beans_dir: &Path, args: CreateArgs) -> Result<String> {
         bean.on_fail = Some(on_fail);
     }
 
+    // Set verify_timeout if provided
+    if let Some(timeout) = args.verify_timeout {
+        bean.verify_timeout = Some(timeout);
+    }
+
     // Get the project directory (parent of beans_dir which is .beans)
     let project_dir = beans_dir
         .parent()
@@ -344,9 +351,9 @@ pub fn cmd_create(beans_dir: &Path, args: CreateArgs) -> Result<String> {
         eprintln!("Warning: post-create hook failed: {}", e);
     }
 
-    // If --claim was passed, claim the bean immediately
+    // If --claim was passed, claim the bean immediately (skip verify-on-claim check)
     if args.claim {
-        cmd_claim(beans_dir, &bean_id, args.by)?;
+        cmd_claim(beans_dir, &bean_id, args.by, true)?;
     }
 
     Ok(bean_id)
@@ -418,6 +425,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+        on_close: None,
+        on_fail: None,
+        post_plan: None,
+        verify_timeout: None,
+        review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -446,6 +458,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         cmd_create(&beans_dir, args).unwrap();
@@ -483,6 +496,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -522,6 +536,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, args1).unwrap();
 
@@ -544,6 +559,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, args2).unwrap();
 
@@ -577,6 +593,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, parent_args).unwrap();
 
@@ -599,6 +616,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, child_args).unwrap();
 
@@ -631,6 +649,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, parent_args).unwrap();
 
@@ -654,7 +673,8 @@ mod tests {
                 pass_ok: true,
                 claim: false,
                 by: None,
-            };
+                            verify_timeout: None,
+};
             cmd_create(&beans_dir, child_args).unwrap();
         }
 
@@ -692,6 +712,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         cmd_create(&beans_dir, args).unwrap();
@@ -730,6 +751,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         cmd_create(&beans_dir, args).unwrap();
@@ -798,6 +820,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -832,7 +855,8 @@ mod tests {
                 pass_ok: true,
                 claim: false,
                 by: None,
-            };
+                            verify_timeout: None,
+};
 
             let result = cmd_create(&beans_dir, args);
             assert!(result.is_ok(), "Priority {} should be valid", priority);
@@ -878,6 +902,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         // Bean should be created
@@ -927,6 +952,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         // Bean creation should fail
@@ -994,6 +1020,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         // Create bean
@@ -1046,6 +1073,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         // Bean creation should STILL succeed (post-create failures are non-blocking)
@@ -1096,6 +1124,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         // Bean creation should succeed (untrusted hooks are skipped)
@@ -1135,6 +1164,7 @@ mod tests {
             pass_ok: false, // default: fail-first enforced
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -1165,6 +1195,7 @@ mod tests {
             pass_ok: false, // default: fail-first enforced
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -1201,6 +1232,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -1237,6 +1269,7 @@ mod tests {
             pass_ok: false,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -1274,6 +1307,7 @@ mod tests {
             pass_ok: true,
             claim: true,
             by: Some("agent-1".to_string()),
+            verify_timeout: None,
         };
 
         cmd_create(&beans_dir, args).unwrap();
@@ -1311,6 +1345,7 @@ mod tests {
             pass_ok: true,
             claim: true,
             by: None,
+            verify_timeout: None,
         };
 
         cmd_create(&beans_dir, args).unwrap();
@@ -1344,6 +1379,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         cmd_create(&beans_dir, args).unwrap();
@@ -1378,6 +1414,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, parent_args).unwrap();
 
@@ -1400,6 +1437,7 @@ mod tests {
             pass_ok: true,
             claim: true,
             by: Some("agent-2".to_string()),
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, child_args).unwrap();
 
@@ -1437,6 +1475,7 @@ mod tests {
             pass_ok: true,
             claim: true,
             by: Some("agent-1".to_string()),
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -1474,6 +1513,7 @@ mod tests {
             pass_ok: true,
             claim: true,
             by: None,
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -1502,6 +1542,7 @@ mod tests {
             pass_ok: true,
             claim: true,
             by: None,
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -1531,6 +1572,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, parent_args).unwrap();
 
@@ -1554,6 +1596,7 @@ mod tests {
             pass_ok: true,
             claim: true,
             by: Some("agent-1".to_string()),
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, child_args);
@@ -1586,6 +1629,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
 
         let result = cmd_create(&beans_dir, args);
@@ -1718,6 +1762,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         let id1 = cmd_create(&beans_dir, args1).unwrap();
 
@@ -1740,6 +1785,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         let id2 = cmd_create_next(&beans_dir, args2).unwrap();
 
@@ -1777,6 +1823,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         let id1 = cmd_create(&beans_dir, args1).unwrap();
 
@@ -1799,6 +1846,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         let id2 = cmd_create_next(&beans_dir, args2).unwrap();
 
@@ -1821,6 +1869,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         let id3 = cmd_create_next(&beans_dir, args3).unwrap();
 
@@ -1864,6 +1913,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, args1).unwrap();
 
@@ -1885,6 +1935,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         cmd_create(&beans_dir, args2).unwrap();
 
@@ -1907,6 +1958,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         let id3 = cmd_create_next(&beans_dir, args3).unwrap();
 
@@ -1945,6 +1997,7 @@ mod tests {
             pass_ok: true,
             claim: false,
             by: None,
+            verify_timeout: None,
         };
         let result = cmd_create_next(&beans_dir, args);
         assert!(result.is_err(), "Should fail with no existing beans");

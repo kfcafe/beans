@@ -1,5 +1,7 @@
+use std::io::Read;
 use std::path::Path;
-use std::process::Command as ShellCommand;
+use std::process::{Command as ShellCommand, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
@@ -7,7 +9,7 @@ use chrono::Utc;
 use crate::bean::{Bean, OnCloseAction, OnFailAction, RunRecord, RunResult, Status};
 use crate::config::Config;
 use crate::discovery::{archive_path_for_bean, find_archived_bean, find_bean_file};
-use crate::hooks::{execute_hook, HookEvent};
+use crate::hooks::{execute_config_hook, execute_hook, is_trusted, current_git_branch, HookEvent, HookVars};
 use crate::index::Index;
 use crate::util::title_to_slug;
 use crate::worktree;
@@ -18,6 +20,21 @@ use std::fs;
 /// Maximum stdout size to capture as outputs (64 KB).
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
+/// Find the largest byte index <= `max_bytes` that falls on a UTF-8 char boundary.
+///
+/// Slicing a `&str` at an arbitrary byte offset panics if it lands inside a
+/// multi-byte character. This helper walks backward to find a safe boundary.
+fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> usize {
+    if max_bytes >= s.len() {
+        return s.len();
+    }
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
 /// Result of running a verify command
 struct VerifyResult {
     success: bool,
@@ -26,12 +43,16 @@ struct VerifyResult {
     #[allow(dead_code)]
     stderr: String,
     output: String, // combined stdout+stderr, for backward compat
+    /// True when the process was killed due to verify_timeout being exceeded.
+    timed_out: bool,
 }
 
 /// Run a verify command for a bean.
 ///
 /// Returns VerifyResult with success status, exit code, and combined stdout/stderr.
-fn run_verify(beans_dir: &Path, verify_cmd: &str) -> Result<VerifyResult> {
+/// If `timeout_secs` is Some(n), the process is killed after n seconds and
+/// the result has `timed_out = true`.
+fn run_verify(beans_dir: &Path, verify_cmd: &str, timeout_secs: Option<u64>) -> Result<VerifyResult> {
     // Run in the project root (parent of .beans/)
     let project_root = beans_dir
         .parent()
@@ -39,28 +60,88 @@ fn run_verify(beans_dir: &Path, verify_cmd: &str) -> Result<VerifyResult> {
 
     println!("Running verify: {}", verify_cmd);
 
-    let output = ShellCommand::new("sh")
+    let mut child = ShellCommand::new("sh")
         .args(["-c", verify_cmd])
         .current_dir(project_root)
-        .output()
-        .with_context(|| format!("Failed to execute verify command: {}", verify_cmd))?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn verify command: {}", verify_cmd))?;
 
-    let stdout_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr_str = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let combined_output = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-    .trim()
-    .to_string();
+    // Drain stdout/stderr in background threads to prevent pipe buffer deadlock.
+    let stdout_thread = {
+        let stdout = child.stdout.take().expect("stdout is piped");
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut reader = std::io::BufReader::new(stdout);
+            let _ = reader.read_to_end(&mut buf);
+            String::from_utf8_lossy(&buf).trim().to_string()
+        })
+    };
+    let stderr_thread = {
+        let stderr = child.stderr.take().expect("stderr is piped");
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut reader = std::io::BufReader::new(stderr);
+            let _ = reader.read_to_end(&mut buf);
+            String::from_utf8_lossy(&buf).trim().to_string()
+        })
+    };
+
+    // Poll for process exit, enforcing the timeout if set.
+    let timeout = timeout_secs.map(Duration::from_secs);
+    let start = Instant::now();
+
+    let (timed_out, exit_status) = loop {
+        match child.try_wait().with_context(|| "Failed to poll verify process")? {
+            Some(status) => break (false, Some(status)),
+            None => {
+                if let Some(limit) = timeout {
+                    if start.elapsed() >= limit {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break (true, None);
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+
+    let stdout_str = stdout_thread.join().unwrap_or_default();
+    let stderr_str = stderr_thread.join().unwrap_or_default();
+
+    if timed_out {
+        let secs = timeout_secs.unwrap_or(0);
+        return Ok(VerifyResult {
+            success: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            output: format!("Verify timed out after {}s", secs),
+            timed_out: true,
+        });
+    }
+
+    let status = exit_status.expect("exit_status is Some when not timed_out");
+    let combined_output = {
+        let mut combined = stdout_str.clone();
+        if !stderr_str.is_empty() {
+            if !combined.is_empty() {
+                combined.push('\n');
+            }
+            combined.push_str(&stderr_str);
+        }
+        combined
+    };
 
     Ok(VerifyResult {
-        success: output.status.success(),
-        exit_code: output.status.code(),
+        success: status.success(),
+        exit_code: status.code(),
         stdout: stdout_str,
         stderr: stderr_str,
         output: combined_output,
+        timed_out: false,
     })
 }
 
@@ -263,18 +344,18 @@ pub fn cmd_close(
     let mut any_closed = false;
     let mut rejected_beans = Vec::new();
 
+    let project_root = beans_dir
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot determine project root from beans dir"))?;
+
+    let config = Config::load(beans_dir).ok();
+
     for id in &ids {
         let bean_path =
             find_bean_file(beans_dir, id).with_context(|| format!("Bean not found: {}", id))?;
 
         let mut bean =
             Bean::from_file(&bean_path).with_context(|| format!("Failed to load bean: {}", id))?;
-
-        // Execute pre-close hook BEFORE verify command
-        // hooks.rs expects the project root (parent of .beans), not the .beans dir itself
-        let project_root = beans_dir
-            .parent()
-            .ok_or_else(|| anyhow!("Cannot determine project root from beans dir"))?;
 
         let pre_close_result =
             execute_hook(HookEvent::PreClose, &bean, project_root, reason.clone());
@@ -299,14 +380,21 @@ pub fn cmd_close(
 
         // Check if bean has a verify command (runs AFTER pre-close hook passes)
         if let Some(ref verify_cmd) = bean.verify {
-            if force {
+            if verify_cmd.trim().is_empty() {
+                eprintln!("Warning: bean {} has empty verify command, skipping", id);
+            } else if force {
                 println!("Skipping verify for bean {} (--force)", id);
             } else {
                 // Record timing for history
                 let started_at = Utc::now();
 
+                // Compute effective timeout: bean-level overrides config-level.
+                let timeout_secs = bean.effective_verify_timeout(
+                    config.as_ref().and_then(|c| c.verify_timeout),
+                );
+
                 // Run the verify command
-                let verify_result = run_verify(beans_dir, verify_cmd)?;
+                let verify_result = run_verify(beans_dir, verify_cmd, timeout_secs)?;
 
                 let finished_at = Utc::now();
                 let duration_secs = (finished_at - started_at).num_milliseconds() as f64 / 1000.0;
@@ -318,6 +406,12 @@ pub fn cmd_close(
                     // Increment attempts
                     bean.attempts += 1;
                     bean.updated_at = Utc::now();
+
+                    // Surface timeout prominently
+                    if verify_result.timed_out {
+                        let secs = timeout_secs.unwrap_or(0);
+                        println!("Verify timed out after {}s for bean {}", secs, id);
+                    }
 
                     // Append failure to notes for future agents (backward compat)
                     let failure_note = format_failure_note(
@@ -342,7 +436,11 @@ pub fn cmd_close(
                         finished_at: Some(finished_at),
                         duration_secs: Some(duration_secs),
                         agent: agent.clone(),
-                        result: RunResult::Fail,
+                        result: if verify_result.timed_out {
+                            RunResult::Timeout
+                        } else {
+                            RunResult::Fail
+                        },
                         exit_code: verify_result.exit_code,
                         tokens: None,
                         cost: None,
@@ -351,7 +449,7 @@ pub fn cmd_close(
 
                     // Circuit breaker: check if subtree attempts exceed max_loops
                     let root_id = find_root_parent(beans_dir, &bean)?;
-                    let config_max = Config::load(beans_dir).map(|c| c.max_loops).unwrap_or(10);
+                    let config_max = config.as_ref().map(|c| c.max_loops).unwrap_or(10);
                     let max_loops_limit = if root_id == bean.id {
                         bean.effective_max_loops(config_max)
                     } else {
@@ -452,10 +550,16 @@ pub fn cmd_close(
                         .with_context(|| format!("Failed to save bean: {}", id))?;
 
                     // Display detailed failure feedback
-                    println!("✗ Verify failed for bean {}", id);
+                    if verify_result.timed_out {
+                        println!("✗ Verify timed out for bean {}", id);
+                    } else {
+                        println!("✗ Verify failed for bean {}", id);
+                    }
                     println!();
                     println!("Command: {}", verify_cmd);
-                    if let Some(code) = verify_result.exit_code {
+                    if verify_result.timed_out {
+                        println!("Timed out after {}s", timeout_secs.unwrap_or(0));
+                    } else if let Some(code) = verify_result.exit_code {
                         println!("Exit code: {}", code);
                     }
                     if !verify_result.output.is_empty() {
@@ -468,6 +572,23 @@ pub fn cmd_close(
                     println!("Attempt {}. Bean remains open.", bean.attempts);
                     println!("Tip: Run `bn verify {}` to test without closing.", id);
                     println!("Tip: Use `bn close {} --force` to skip verify.", id);
+
+                    // Fire on_fail config hook (async, non-blocking)
+                    if let Some(ref config) = config {
+                        if let Some(ref on_fail_template) = config.on_fail {
+                            let output_text = &verify_result.output;
+                            let vars = HookVars {
+                                id: Some(id.clone()),
+                                title: Some(bean.title.clone()),
+                                status: Some(format!("{}", bean.status)),
+                                attempt: Some(bean.attempts),
+                                output: Some(output_text.clone()),
+                                branch: current_git_branch(),
+                                ..Default::default()
+                            };
+                            execute_config_hook("on_fail", on_fail_template, &vars, project_root);
+                        }
+                    }
 
                     continue;
                 }
@@ -490,7 +611,8 @@ pub fn cmd_close(
                 let stdout = &verify_result.stdout;
                 if !stdout.is_empty() {
                     if stdout.len() > MAX_OUTPUT_BYTES {
-                        let truncated = &stdout[..MAX_OUTPUT_BYTES];
+                        let end = truncate_to_char_boundary(stdout, MAX_OUTPUT_BYTES);
+                        let truncated = &stdout[..end];
                         eprintln!(
                             "Warning: verify stdout ({} bytes) exceeds 64KB, truncating",
                             stdout.len()
@@ -543,6 +665,20 @@ pub fn cmd_close(
         bean.close_reason = reason.clone();
         bean.updated_at = now;
 
+        // Finalize the current attempt as success (memory system tracking)
+        if let Some(attempt) = bean.attempt_log.last_mut() {
+            if attempt.finished_at.is_none() {
+                attempt.outcome = crate::bean::AttemptOutcome::Success;
+                attempt.finished_at = Some(now);
+                attempt.notes = reason.clone();
+            }
+        }
+
+        // Update last_verified for facts (staleness tracking)
+        if bean.bean_type == "fact" {
+            bean.last_verified = Some(now);
+        }
+
         bean.to_file(&bean_path)
             .with_context(|| format!("Failed to save bean: {}", id))?;
 
@@ -591,6 +727,14 @@ pub fn cmd_close(
         for action in &bean.on_close {
             match action {
                 OnCloseAction::Run { command } => {
+                    if !is_trusted(project_root) {
+                        eprintln!(
+                            "on_close: skipping `{}` (not trusted — run `bn trust` to enable)",
+                            command
+                        );
+                        continue;
+                    }
+                    eprintln!("on_close: running `{}`", command);
                     let status = std::process::Command::new("sh")
                         .args(["-c", command.as_str()])
                         .current_dir(project_root)
@@ -609,6 +753,20 @@ pub fn cmd_close(
             }
         }
 
+        // Fire on_close config hook (async, non-blocking)
+        if let Some(ref config) = config {
+            if let Some(ref on_close_template) = config.on_close {
+                let vars = HookVars {
+                    id: Some(id.clone()),
+                    title: Some(bean.title.clone()),
+                    status: Some("closed".into()),
+                    branch: current_git_branch(),
+                    ..Default::default()
+                };
+                execute_config_hook("on_close", on_close_template, &vars, project_root);
+            }
+        }
+
         // Clean up worktree after successful close
         if let Some(ref wt_info) = worktree_info {
             if let Err(e) = worktree::cleanup_worktree(wt_info) {
@@ -617,14 +775,17 @@ pub fn cmd_close(
         }
 
         // Check if parent should be auto-closed
-        if let Some(parent_id) = &bean.parent {
-            // Check config for auto_close_parent setting
-            let auto_close_enabled = Config::load(beans_dir)
-                .map(|c| c.auto_close_parent)
-                .unwrap_or(true); // Default to true
+        // (skip if beans_dir was removed by worktree cleanup)
+        if beans_dir.exists() {
+            if let Some(parent_id) = &bean.parent {
+                // Check config for auto_close_parent setting
+                let auto_close_enabled = config.as_ref()
+                    .map(|c| c.auto_close_parent)
+                    .unwrap_or(true); // Default to true
 
-            if auto_close_enabled && all_children_closed(beans_dir, parent_id)? {
-                auto_close_parent(beans_dir, parent_id)?;
+                if auto_close_enabled && all_children_closed(beans_dir, parent_id)? {
+                    auto_close_parent(beans_dir, parent_id)?;
+                }
             }
         }
     }
@@ -639,12 +800,86 @@ pub fn cmd_close(
     }
 
     // Rebuild index once after all updates (even if some failed verification)
-    if any_closed || !ids.is_empty() {
+    // Skip if beans_dir was removed by worktree cleanup
+    if (any_closed || !ids.is_empty()) && beans_dir.exists() {
         let index = Index::build(beans_dir).with_context(|| "Failed to rebuild index")?;
         index
             .save(beans_dir)
             .with_context(|| "Failed to save index")?;
     }
+
+    Ok(())
+}
+
+/// Mark an attempt as explicitly failed.
+///
+/// The bean stays open and the claim is released so another agent can retry.
+/// Records the failure in attempt_log for episodic memory.
+pub fn cmd_close_failed(
+    beans_dir: &Path,
+    ids: Vec<String>,
+    reason: Option<String>,
+) -> Result<()> {
+    if ids.is_empty() {
+        return Err(anyhow!("At least one bean ID is required"));
+    }
+
+    let now = Utc::now();
+
+    for id in &ids {
+        let bean_path =
+            find_bean_file(beans_dir, id).with_context(|| format!("Bean not found: {}", id))?;
+
+        let mut bean =
+            Bean::from_file(&bean_path).with_context(|| format!("Failed to load bean: {}", id))?;
+
+        // Finalize the current attempt as failed
+        if let Some(attempt) = bean.attempt_log.last_mut() {
+            if attempt.finished_at.is_none() {
+                attempt.outcome = crate::bean::AttemptOutcome::Failed;
+                attempt.finished_at = Some(now);
+                attempt.notes = reason.clone();
+            }
+        }
+
+        // Release the claim (bean stays open for retry)
+        bean.claimed_by = None;
+        bean.claimed_at = None;
+        bean.status = Status::Open;
+        bean.updated_at = now;
+
+        // Append failure to notes for visibility
+        if let Some(ref reason_text) = reason {
+            let failure_note = format!(
+                "\n## Failed attempt — {}\n{}\n",
+                now.format("%Y-%m-%dT%H:%M:%SZ"),
+                reason_text
+            );
+            match &mut bean.notes {
+                Some(notes) => notes.push_str(&failure_note),
+                None => bean.notes = Some(failure_note),
+            }
+        }
+
+        bean.to_file(&bean_path)
+            .with_context(|| format!("Failed to save bean: {}", id))?;
+
+        let attempt_count = bean.attempt_log.len();
+        println!(
+            "Marked bean {} as failed (attempt #{}): {}",
+            id, attempt_count, bean.title
+        );
+        if let Some(ref reason_text) = reason {
+            println!("  Reason: {}", reason_text);
+        }
+        println!("  Bean remains open for retry.");
+    }
+
+    // Rebuild index
+    let index = Index::build(beans_dir).with_context(|| "Failed to rebuild index")?;
+    index
+        .save(beans_dir)
+        .with_context(|| "Failed to save index")?;
 
     Ok(())
 }
@@ -963,6 +1198,42 @@ mod tests {
         assert_eq!(updated.status, Status::Closed);
         assert!(updated.is_archived);
         assert_eq!(updated.attempts, 0); // Attempts should not be incremented
+    }
+
+    #[test]
+    fn test_close_with_empty_verify_still_closes() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+        let mut bean = Bean::new("1", "Task with empty verify");
+        bean.verify = Some("".to_string());
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+        // Bean should be closed (empty verify treated as no-verify)
+        let archived = crate::discovery::find_archived_bean(&beans_dir, "1").unwrap();
+        let updated = Bean::from_file(&archived).unwrap();
+        assert_eq!(updated.status, Status::Closed);
+        assert!(updated.is_archived);
+        assert_eq!(updated.attempts, 0); // No attempts recorded
+    }
+
+    #[test]
+    fn test_close_with_whitespace_verify_still_closes() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+        let mut bean = Bean::new("1", "Task with whitespace verify");
+        bean.verify = Some("   ".to_string());
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+        let archived = crate::discovery::find_archived_bean(&beans_dir, "1").unwrap();
+        let updated = Bean::from_file(&archived).unwrap();
+        assert_eq!(updated.status, Status::Closed);
+        assert!(updated.is_archived);
     }
 
     #[test]
@@ -1400,6 +1671,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+        verify_timeout: None,
+        review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -1512,6 +1788,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+        verify_timeout: None,
+        review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -1697,6 +1978,40 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_to_char_boundary_ascii() {
+        let s = "hello world";
+        assert_eq!(truncate_to_char_boundary(s, 5), 5);
+        assert_eq!(&s[..truncate_to_char_boundary(s, 5)], "hello");
+    }
+
+    #[test]
+    fn test_truncate_to_char_boundary_multibyte() {
+        // Each emoji is 4 bytes: "😀😁😂" = 12 bytes
+        let s = "😀😁😂";
+        assert_eq!(s.len(), 12);
+
+        // Truncating at byte 5 (mid-codepoint) should back up to byte 4
+        assert_eq!(truncate_to_char_boundary(s, 5), 4);
+        assert_eq!(&s[..truncate_to_char_boundary(s, 5)], "😀");
+
+        // Truncating at byte 8 (exact boundary) should stay at 8
+        assert_eq!(truncate_to_char_boundary(s, 8), 8);
+        assert_eq!(&s[..truncate_to_char_boundary(s, 8)], "😀😁");
+    }
+
+    #[test]
+    fn test_truncate_to_char_boundary_beyond_len() {
+        let s = "short";
+        assert_eq!(truncate_to_char_boundary(s, 100), 5);
+    }
+
+    #[test]
+    fn test_truncate_to_char_boundary_zero() {
+        let s = "hello";
+        assert_eq!(truncate_to_char_boundary(s, 0), 0);
+    }
+
+    #[test]
     fn test_format_failure_note() {
         let note = format_failure_note(1, Some(1), "error message");
 
@@ -1714,6 +2029,7 @@ mod tests {
     fn on_close_run_action_executes_command() {
         let (dir, beans_dir) = setup_test_beans_dir();
         let project_root = dir.path();
+        crate::hooks::create_trust(project_root).unwrap();
         let marker = project_root.join("on_close_ran");
 
         let mut bean = Bean::new("1", "Task with on_close run");
@@ -1752,7 +2068,9 @@ mod tests {
 
     #[test]
     fn on_close_run_failure_does_not_prevent_close() {
-        let (_dir, beans_dir) = setup_test_beans_dir();
+        let (dir, beans_dir) = setup_test_beans_dir();
+        let project_root = dir.path();
+        crate::hooks::create_trust(project_root).unwrap();
 
         let mut bean = Bean::new("1", "Task with failing on_close");
         bean.on_close = vec![OnCloseAction::Run {
@@ -1775,6 +2093,7 @@ mod tests {
     fn on_close_multiple_actions_all_run() {
         let (dir, beans_dir) = setup_test_beans_dir();
         let project_root = dir.path();
+        crate::hooks::create_trust(project_root).unwrap();
         let marker1 = project_root.join("on_close_1");
         let marker2 = project_root.join("on_close_2");
 
@@ -1801,9 +2120,40 @@ mod tests {
     }
 
     #[test]
+    fn on_close_run_skipped_without_trust() {
+        let (dir, beans_dir) = setup_test_beans_dir();
+        let project_root = dir.path();
+        // DO NOT enable trust — on_close Run should be skipped
+        let marker = project_root.join("on_close_should_not_exist");
+
+        let mut bean = Bean::new("1", "Task with untrusted on_close");
+        bean.on_close = vec![OnCloseAction::Run {
+            command: format!("touch {}", marker.display()),
+        }];
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+        // Command should NOT have executed (no trust)
+        assert!(
+            !marker.exists(),
+            "on_close run should be skipped without trust"
+        );
+
+        // Bean should still be archived (on_close skip doesn't block close)
+        let archived = crate::discovery::find_archived_bean(&beans_dir, "1").unwrap();
+        let updated = Bean::from_file(&archived).unwrap();
+        assert_eq!(updated.status, Status::Closed);
+        assert!(updated.is_archived);
+    }
+
+    #[test]
     fn on_close_runs_in_project_root() {
         let (dir, beans_dir) = setup_test_beans_dir();
         let project_root = dir.path();
+        crate::hooks::create_trust(project_root).unwrap();
 
         let mut bean = Bean::new("1", "Task with pwd check");
         // Write the working directory to a file so we can verify it
@@ -2472,6 +2822,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+        verify_timeout: None,
+        review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -2736,5 +3091,509 @@ mod tests {
             .filter(|l| l.as_str() == "circuit-breaker")
             .count();
         assert_eq!(count, 1, "Should not duplicate 'circuit-breaker' label");
+    }
+
+    // =====================================================================
+    // Close Failed Tests
+    // =====================================================================
+
+    #[test]
+    fn test_close_failed_marks_attempt_as_failed() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+        let mut bean = Bean::new("1", "Task");
+        bean.status = Status::InProgress;
+        bean.claimed_by = Some("agent-1".to_string());
+        // Simulate a claim-started attempt
+        bean.attempt_log.push(crate::bean::AttemptRecord {
+            num: 1,
+            outcome: crate::bean::AttemptOutcome::Abandoned,
+            notes: None,
+            agent: Some("agent-1".to_string()),
+            started_at: Some(Utc::now()),
+            finished_at: None,
+        });
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close_failed(
+            &beans_dir,
+            vec!["1".to_string()],
+            Some("blocked by upstream".to_string()),
+        )
+        .unwrap();
+
+        let updated =
+            Bean::from_file(crate::discovery::find_bean_file(&beans_dir, "1").unwrap()).unwrap();
+        assert_eq!(updated.status, Status::Open);
+        assert!(updated.claimed_by.is_none());
+        assert_eq!(updated.attempt_log.len(), 1);
+        assert_eq!(
+            updated.attempt_log[0].outcome,
+            crate::bean::AttemptOutcome::Failed
+        );
+        assert!(updated.attempt_log[0].finished_at.is_some());
+        assert_eq!(
+            updated.attempt_log[0].notes.as_deref(),
+            Some("blocked by upstream")
+        );
+    }
+
+    #[test]
+    fn test_close_failed_appends_to_notes() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+        let mut bean = Bean::new("1", "Task");
+        bean.status = Status::InProgress;
+        bean.attempt_log.push(crate::bean::AttemptRecord {
+            num: 1,
+            outcome: crate::bean::AttemptOutcome::Abandoned,
+            notes: None,
+            agent: None,
+            started_at: Some(Utc::now()),
+            finished_at: None,
+        });
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close_failed(
+            &beans_dir,
+            vec!["1".to_string()],
+            Some("JWT incompatible".to_string()),
+        )
+        .unwrap();
+
+        let updated =
+            Bean::from_file(crate::discovery::find_bean_file(&beans_dir, "1").unwrap()).unwrap();
+        assert!(updated.notes.is_some());
+        assert!(updated.notes.unwrap().contains("JWT incompatible"));
+    }
+
+    #[test]
+    fn test_close_failed_without_reason() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+        let mut bean = Bean::new("1", "Task");
+        bean.status = Status::InProgress;
+        bean.attempt_log.push(crate::bean::AttemptRecord {
+            num: 1,
+            outcome: crate::bean::AttemptOutcome::Abandoned,
+            notes: None,
+            agent: None,
+            started_at: Some(Utc::now()),
+            finished_at: None,
+        });
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close_failed(&beans_dir, vec!["1".to_string()], None).unwrap();
+
+        let updated =
+            Bean::from_file(crate::discovery::find_bean_file(&beans_dir, "1").unwrap()).unwrap();
+        assert_eq!(updated.status, Status::Open);
+        assert_eq!(
+            updated.attempt_log[0].outcome,
+            crate::bean::AttemptOutcome::Failed
+        );
+    }
+
+    // =====================================================================
+    // Worktree Merge Integration Tests
+    // =====================================================================
+
+    mod worktree_merge {
+        use super::*;
+        use std::path::PathBuf;
+        use std::sync::Mutex;
+
+        /// Serialize tests that change the process-global CWD.
+        static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+        /// RAII guard that restores the process CWD on drop (even on panic).
+        struct CwdGuard(PathBuf);
+        impl Drop for CwdGuard {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+
+        /// Run a git command in the given directory, panicking on failure.
+        fn run_git(dir: &Path, args: &[&str]) {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap_or_else(|e| panic!("git {:?} failed to execute: {}", args, e));
+            assert!(
+                output.status.success(),
+                "git {:?} in {} failed (exit {:?}):\nstdout: {}\nstderr: {}",
+                args,
+                dir.display(),
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+
+        /// Create a git repo with a secondary worktree for testing.
+        ///
+        /// Returns (tempdir, main_repo_dir, worktree_beans_dir).
+        /// Main repo is on `main` branch; worktree is on `feature` branch.
+        fn setup_git_worktree() -> (TempDir, PathBuf, PathBuf) {
+            let dir = TempDir::new().unwrap();
+            let base = std::fs::canonicalize(dir.path()).unwrap();
+            let main_dir = base.join("main");
+            let worktree_dir = base.join("worktree");
+            fs::create_dir(&main_dir).unwrap();
+
+            // Initialize git repo on an explicit "main" branch
+            run_git(&main_dir, &["init"]);
+            run_git(&main_dir, &["config", "user.email", "test@test.com"]);
+            run_git(&main_dir, &["config", "user.name", "Test"]);
+            run_git(&main_dir, &["checkout", "-b", "main"]);
+
+            // Create an initial commit so the branch exists
+            fs::write(main_dir.join("initial.txt"), "initial content").unwrap();
+            run_git(&main_dir, &["add", "-A"]);
+            run_git(&main_dir, &["commit", "-m", "Initial commit"]);
+
+            // Add .beans/ directory and commit it
+            let beans_dir = main_dir.join(".beans");
+            fs::create_dir(&beans_dir).unwrap();
+            fs::write(beans_dir.join(".gitkeep"), "").unwrap();
+            run_git(&main_dir, &["add", "-A"]);
+            run_git(&main_dir, &["commit", "-m", "Add .beans directory"]);
+
+            // Create a secondary worktree on a feature branch
+            run_git(
+                &main_dir,
+                &[
+                    "worktree",
+                    "add",
+                    worktree_dir.to_str().unwrap(),
+                    "-b",
+                    "feature",
+                ],
+            );
+
+            let worktree_beans_dir = worktree_dir.join(".beans");
+
+            (dir, main_dir, worktree_beans_dir)
+        }
+
+        #[test]
+        fn test_close_in_worktree_commits_and_merges() {
+            let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _guard = CwdGuard(std::env::current_dir().unwrap());
+
+            let (_dir, main_dir, worktree_beans_dir) = setup_git_worktree();
+            let worktree_dir = worktree_beans_dir.parent().unwrap();
+
+            // Create a bean in the worktree's .beans/
+            let bean = Bean::new("1", "Worktree Task");
+            let slug = title_to_slug(&bean.title);
+            bean.to_file(worktree_beans_dir.join(format!("1-{}.md", slug)))
+                .unwrap();
+
+            // Make a feature change in the worktree
+            fs::write(worktree_dir.join("feature.txt"), "feature content").unwrap();
+
+            // Set CWD to worktree so detect_worktree() identifies it
+            std::env::set_current_dir(worktree_dir).unwrap();
+
+            // Close the bean — should commit changes, merge to main, and archive
+            cmd_close(&worktree_beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+            // Verify: feature changes were merged into the main branch
+            assert!(
+                main_dir.join("feature.txt").exists(),
+                "feature.txt should be merged to main"
+            );
+            let content = fs::read_to_string(main_dir.join("feature.txt")).unwrap();
+            assert_eq!(content, "feature content");
+        }
+
+        #[test]
+        fn test_close_with_merge_conflict_aborts() {
+            let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _guard = CwdGuard(std::env::current_dir().unwrap());
+
+            let (_dir, main_dir, worktree_beans_dir) = setup_git_worktree();
+            let worktree_dir = worktree_beans_dir.parent().unwrap();
+
+            // Create a conflicting change on main (modify initial.txt)
+            fs::write(main_dir.join("initial.txt"), "main version").unwrap();
+            run_git(&main_dir, &["add", "-A"]);
+            run_git(&main_dir, &["commit", "-m", "Diverge on main"]);
+
+            // Create a conflicting change in the worktree (same file, different content)
+            fs::write(worktree_dir.join("initial.txt"), "feature version").unwrap();
+
+            // Create a bean in the worktree
+            let bean = Bean::new("1", "Conflict Task");
+            let slug = title_to_slug(&bean.title);
+            bean.to_file(worktree_beans_dir.join(format!("1-{}.md", slug)))
+                .unwrap();
+
+            // Set CWD to worktree
+            std::env::set_current_dir(worktree_dir).unwrap();
+
+            // Close should detect conflict, abort merge, and leave bean open
+            cmd_close(&worktree_beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+            // Bean should NOT be closed — merge conflict prevents archiving
+            let bean_file = crate::discovery::find_bean_file(&worktree_beans_dir, "1").unwrap();
+            let updated = Bean::from_file(&bean_file).unwrap();
+            assert_eq!(
+                updated.status,
+                Status::Open,
+                "Bean should remain open when merge conflicts"
+            );
+        }
+
+        #[test]
+        fn test_close_in_main_worktree_skips_merge() {
+            let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _guard = CwdGuard(std::env::current_dir().unwrap());
+
+            let dir = TempDir::new().unwrap();
+            let base = std::fs::canonicalize(dir.path()).unwrap();
+            let repo_dir = base.join("repo");
+            fs::create_dir(&repo_dir).unwrap();
+
+            // Initialize a git repo (no secondary worktrees)
+            run_git(&repo_dir, &["init"]);
+            run_git(&repo_dir, &["config", "user.email", "test@test.com"]);
+            run_git(&repo_dir, &["config", "user.name", "Test"]);
+            run_git(&repo_dir, &["checkout", "-b", "main"]);
+
+            fs::write(repo_dir.join("file.txt"), "content").unwrap();
+            run_git(&repo_dir, &["add", "-A"]);
+            run_git(&repo_dir, &["commit", "-m", "Initial commit"]);
+
+            // Create .beans/ and a bean
+            let beans_dir = repo_dir.join(".beans");
+            fs::create_dir(&beans_dir).unwrap();
+
+            let bean = Bean::new("1", "Main Worktree Task");
+            let slug = title_to_slug(&bean.title);
+            bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+                .unwrap();
+
+            // CWD is the main worktree — detect_worktree() should return None
+            std::env::set_current_dir(&repo_dir).unwrap();
+
+            cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+            // Bean should be archived normally (no merge step)
+            let archived = crate::discovery::find_archived_bean(&beans_dir, "1").unwrap();
+            let updated = Bean::from_file(&archived).unwrap();
+            assert_eq!(updated.status, Status::Closed);
+            assert!(updated.is_archived);
+        }
+
+        #[test]
+        fn test_close_outside_git_repo_works() {
+            let _lock = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let _guard = CwdGuard(std::env::current_dir().unwrap());
+
+            // Plain temp directory — no git repo at all
+            let dir = TempDir::new().unwrap();
+            let base = std::fs::canonicalize(dir.path()).unwrap();
+            let beans_dir = base.join(".beans");
+            fs::create_dir(&beans_dir).unwrap();
+
+            let bean = Bean::new("1", "No Git Task");
+            let slug = title_to_slug(&bean.title);
+            bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+                .unwrap();
+
+            // CWD in a non-git directory — detect_worktree() should return None
+            std::env::set_current_dir(&base).unwrap();
+
+            cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+            // Bean should be archived normally
+            let archived = crate::discovery::find_archived_bean(&beans_dir, "1").unwrap();
+            let updated = Bean::from_file(&archived).unwrap();
+            assert_eq!(updated.status, Status::Closed);
+            assert!(updated.is_archived);
+        }
+    }
+}
+
+// =====================================================================
+// verify_timeout tests (live outside the git-worktree module)
+// =====================================================================
+
+#[cfg(test)]
+mod verify_timeout_tests {
+    use super::*;
+    use crate::bean::{Bean, RunResult, Status};
+    use crate::util::title_to_slug;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn setup_test_beans_dir() -> (TempDir, std::path::PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let beans_dir = dir.path().join(".beans");
+        fs::create_dir(&beans_dir).unwrap();
+        (dir, beans_dir)
+    }
+
+    /// A verify command that takes longer than the timeout is killed and
+    /// treated as a failure. The bean remains open, attempts is incremented,
+    /// and the history entry records RunResult::Timeout.
+    #[test]
+    fn verify_timeout_kills_slow_process_and_records_timeout() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+
+        let mut bean = Bean::new("1", "Slow verify task");
+        bean.verify = Some("sleep 60".to_string());
+        bean.verify_timeout = Some(1); // 1-second timeout
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+        // Bean should still be open (verify timed out = failure)
+        let updated =
+            Bean::from_file(crate::discovery::find_bean_file(&beans_dir, "1").unwrap()).unwrap();
+        assert_eq!(updated.status, Status::Open);
+        assert_eq!(updated.attempts, 1);
+        assert!(updated.closed_at.is_none());
+
+        // History should contain a Timeout entry
+        assert_eq!(updated.history.len(), 1);
+        assert_eq!(updated.history[0].result, RunResult::Timeout);
+        assert!(updated.history[0].exit_code.is_none()); // killed, no exit code
+
+        // The output_snippet should mention the timeout
+        let snippet = updated.history[0].output_snippet.as_deref().unwrap_or("");
+        assert!(
+            snippet.contains("timed out"),
+            "expected snippet to contain 'timed out', got: {:?}",
+            snippet
+        );
+    }
+
+    /// A verify command that finishes within the timeout is not affected.
+    #[test]
+    fn verify_timeout_does_not_affect_fast_commands() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+
+        let mut bean = Bean::new("1", "Fast verify task");
+        bean.verify = Some("true".to_string());
+        bean.verify_timeout = Some(30); // generous timeout
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+        // Bean should be closed normally
+        let archived = crate::discovery::find_archived_bean(&beans_dir, "1").unwrap();
+        let updated = Bean::from_file(&archived).unwrap();
+        assert_eq!(updated.status, Status::Closed);
+        assert!(updated.is_archived);
+    }
+
+    /// Bean-level verify_timeout overrides the config-level default.
+    #[test]
+    fn verify_timeout_bean_level_overrides_config() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+
+        // Write a config with a generous timeout (should be overridden by bean)
+        let config_yaml = "project: test\nnext_id: 2\nverify_timeout: 60\n";
+        fs::write(beans_dir.join("config.yaml"), config_yaml).unwrap();
+
+        let mut bean = Bean::new("1", "Bean timeout overrides config");
+        bean.verify = Some("sleep 60".to_string());
+        bean.verify_timeout = Some(1); // bean says 1s — should override config's 60s
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+        let updated =
+            Bean::from_file(crate::discovery::find_bean_file(&beans_dir, "1").unwrap()).unwrap();
+        assert_eq!(updated.status, Status::Open);
+        assert_eq!(updated.history[0].result, RunResult::Timeout);
+    }
+
+    /// Config-level verify_timeout applies when bean has no per-bean override.
+    #[test]
+    fn verify_timeout_config_level_applies_when_bean_has_none() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+
+        // Write a config with a short timeout
+        let config_yaml = "project: test\nnext_id: 2\nverify_timeout: 1\n";
+        fs::write(beans_dir.join("config.yaml"), config_yaml).unwrap();
+
+        let mut bean = Bean::new("1", "Config timeout applies");
+        bean.verify = Some("sleep 60".to_string());
+        // No bean-level verify_timeout — config's 1s should apply
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+        let updated =
+            Bean::from_file(crate::discovery::find_bean_file(&beans_dir, "1").unwrap()).unwrap();
+        assert_eq!(updated.status, Status::Open);
+        assert_eq!(updated.history[0].result, RunResult::Timeout);
+    }
+
+    /// Notes are updated with a timeout message when verify times out.
+    #[test]
+    fn verify_timeout_appends_to_notes() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+
+        let mut bean = Bean::new("1", "Timeout notes test");
+        bean.verify = Some("sleep 60".to_string());
+        bean.verify_timeout = Some(1);
+        let slug = title_to_slug(&bean.title);
+        bean.to_file(beans_dir.join(format!("1-{}.md", slug)))
+            .unwrap();
+
+        cmd_close(&beans_dir, vec!["1".to_string()], None, false).unwrap();
+
+        let updated =
+            Bean::from_file(crate::discovery::find_bean_file(&beans_dir, "1").unwrap()).unwrap();
+        let notes = updated.notes.unwrap_or_default();
+        // Notes should contain the timeout message
+        assert!(
+            notes.contains("timed out"),
+            "expected notes to contain 'timed out', got: {:?}",
+            notes
+        );
+    }
+
+    /// effective_verify_timeout: bean overrides config when both set.
+    #[test]
+    fn effective_verify_timeout_bean_wins_over_config() {
+        let bean = {
+            let mut b = Bean::new("1", "Test");
+            b.verify_timeout = Some(5);
+            b
+        };
+        assert_eq!(bean.effective_verify_timeout(Some(30)), Some(5));
+    }
+
+    /// effective_verify_timeout: config applies when bean has none.
+    #[test]
+    fn effective_verify_timeout_config_fallback() {
+        let bean = Bean::new("1", "Test");
+        assert_eq!(bean.effective_verify_timeout(Some(30)), Some(30));
+    }
+
+    /// effective_verify_timeout: both None → None (no limit).
+    #[test]
+    fn effective_verify_timeout_both_none() {
+        let bean = Bean::new("1", "Test");
+        assert_eq!(bean.effective_verify_timeout(None), None);
     }
 }

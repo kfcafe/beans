@@ -1,7 +1,8 @@
 //! Utility functions for bean ID parsing and status conversion.
 
 use crate::bean::Status;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use std::path::Path;
 use std::str::FromStr;
 
 /// Validate a bean ID to prevent path traversal attacks.
@@ -200,6 +201,39 @@ pub fn title_to_slug(title: &str) -> String {
     } else {
         slug
     }
+}
+
+/// Write contents to a file atomically using write-to-temp + rename.
+///
+/// Writes to a temporary file in the same directory as `path`, then renames
+/// it to the target. `rename()` is atomic on POSIX when source and destination
+/// are on the same filesystem (guaranteed here since we use the same directory).
+/// The temp file is cleaned up on error.
+pub fn atomic_write(path: &Path, contents: &str) -> Result<()> {
+    let tmp_path = path.with_extension(format!(
+        "tmp.{}",
+        std::process::id()
+    ));
+
+    // Write to temp file; clean up on failure
+    if let Err(e) = std::fs::write(&tmp_path, contents) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e).with_context(|| format!("Failed to write temp file: {}", tmp_path.display()));
+    }
+
+    // Atomic rename; clean up temp on failure
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e).with_context(|| {
+            format!(
+                "Failed to rename {} -> {}",
+                tmp_path.display(),
+                path.display()
+            )
+        });
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -576,5 +610,48 @@ mod tests {
 
         let max_id = "a".repeat(255);
         assert!(validate_bean_id(&max_id).is_ok());
+    }
+
+    // ---------- atomic_write tests ----------
+
+    #[test]
+    fn test_atomic_write_creates_file_with_correct_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yaml");
+
+        atomic_write(&path, "hello: world\n").unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, "hello: world\n");
+    }
+
+    #[test]
+    fn test_atomic_write_overwrites_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yaml");
+
+        std::fs::write(&path, "old content").unwrap();
+        atomic_write(&path, "new content").unwrap();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, "new content");
+    }
+
+    #[test]
+    fn test_atomic_write_no_temp_file_left_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.yaml");
+
+        atomic_write(&path, "data").unwrap();
+
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(entries.len(), 1, "only the target file should exist");
+        assert_eq!(
+            entries[0].file_name().to_str().unwrap(),
+            "test.yaml"
+        );
     }
 }

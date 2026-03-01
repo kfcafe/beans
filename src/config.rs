@@ -5,6 +5,31 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// Configuration for the adversarial review feature (`bn review` / `bn run --review`).
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct ReviewConfig {
+    /// Shell command template for the review agent. Use `{id}` as placeholder for bean ID.
+    /// If unset, falls back to the global `run` template.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// Maximum number of times review can reopen a bean before giving up (default: 2).
+    #[serde(default = "default_max_reopens")]
+    pub max_reopens: u32,
+}
+
+fn default_max_reopens() -> u32 {
+    2
+}
+
+impl Default for ReviewConfig {
+    fn default() -> Self {
+        Self {
+            run: None,
+            max_reopens: 2,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub project: String,
@@ -47,6 +72,29 @@ pub struct Config {
     /// from clobbering the same file.
     #[serde(default, skip_serializing_if = "is_false_bool")]
     pub file_locking: bool,
+    /// Shell command template to run after a bean is successfully closed.
+    /// Supports template variables: {id}, {title}, {status}, {branch}.
+    /// Runs asynchronously — failures are logged but don't affect the close.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_close: Option<String>,
+    /// Shell command template to run after a verify attempt fails.
+    /// Supports template variables: {id}, {title}, {attempt}, {output}, {branch}.
+    /// Runs asynchronously — failures are logged but don't affect the operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_fail: Option<String>,
+    /// Shell command template to run after `bn plan` creates children.
+    /// Supports template variables: {id}, {parent}, {children}, {branch}.
+    /// Runs asynchronously — failures are logged but don't affect the plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_plan: Option<String>,
+    /// Default timeout in seconds for verify commands (default: None = no limit).
+    /// Per-bean `verify_timeout` overrides this value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify_timeout: Option<u64>,
+    /// Adversarial review configuration (`bn review` / `bn run --review`).
+    /// Optional — review is disabled if not configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<ReviewConfig>,
 }
 
 fn default_auto_close_parent() -> bool {
@@ -71,6 +119,30 @@ fn default_poll_interval() -> u32 {
 
 fn is_false_bool(v: &bool) -> bool {
     !v
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            project: String::new(),
+            next_id: 1,
+            auto_close_parent: true,
+            max_tokens: 30000,
+            run: None,
+            plan: None,
+            max_loops: 10,
+            max_concurrent: 4,
+            poll_interval: 30,
+            extends: Vec::new(),
+            rules_file: None,
+            file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
+        }
+    }
 }
 
 impl Config {
@@ -155,6 +227,21 @@ impl Config {
             if !config.file_locking {
                 config.file_locking = parent.file_locking;
             }
+            if config.on_close.is_none() {
+                config.on_close = parent.on_close.clone();
+            }
+            if config.on_fail.is_none() {
+                config.on_fail = parent.on_fail.clone();
+            }
+            if config.post_plan.is_none() {
+                config.post_plan = parent.post_plan.clone();
+            }
+            if config.verify_timeout.is_none() {
+                config.verify_timeout = parent.verify_timeout;
+            }
+            if config.review.is_none() {
+                config.review = parent.review.clone();
+            }
             // Never inherit: project, next_id, extends
         }
 
@@ -229,6 +316,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
 
         config.save(dir.path()).unwrap();
@@ -252,6 +344,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
 
         assert_eq!(config.increment_id(), 1);
@@ -291,6 +388,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -329,6 +431,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -366,6 +473,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -402,6 +514,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -428,6 +545,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -464,6 +586,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -677,6 +804,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -728,6 +860,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -751,6 +888,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -787,6 +929,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -823,6 +970,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(dir.path()).unwrap();
 
@@ -924,6 +1076,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
 
         config.save(dir.path()).unwrap();

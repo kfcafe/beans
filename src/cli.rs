@@ -31,6 +31,7 @@ Commands:
     tree         Show hierarchical tree of beans
     graph        Display dependency graph
     context      Output context for a bean, or memory context (no args)
+    trace        Walk bean lineage and dependency chain
 
   MEMORY
     fact         Create a verified fact (requires --verify)
@@ -40,11 +41,13 @@ Commands:
   AGENTS
     run          Dispatch ready beans to agents
     plan         Interactively plan a large bean into children
+    race         Race N agents on the same bean, pick the best
+    review       Adversarial post-close review of an implementation
     agents       Show running and recently completed agents
     logs         View agent output from log files
 
   MCP
-    mcp          MCP server for IDE integration (Cursor, Windsurf, Claude Desktop)
+    mcp          MCP server for IDE integration (Cursor, Windsurf, Claude Desktop, Cline)
 
   DEPENDENCIES
     dep          Manage dependencies between beans
@@ -58,6 +61,10 @@ Commands:
     config       Manage project configuration
     trust        Manage hook trust (enable/disable hook execution)
     unarchive    Unarchive a bean (move from archive back to main beans directory)
+    locks        View and manage file locks for concurrent agents
+
+  SHELL
+    completions  Generate shell completions (bash, zsh, fish, powershell)
   help         Print this message or the help of the given subcommand(s)
 
 {options}
@@ -149,91 +156,8 @@ Verify patterns:
   Multi    cmd1 && cmd2 && cmd3"
     )]
     Create {
-        #[command(subcommand)]
-        subcommand: Option<CreateSubcommand>,
-
-        /// Bean title
-        title: Option<String>,
-
-        /// Bean title (alternative to positional arg)
-        #[arg(long, conflicts_with = "title")]
-        set_title: Option<String>,
-
-        /// Full description / agent context
-        #[arg(long)]
-        description: Option<String>,
-
-        /// Acceptance criteria
-        #[arg(long)]
-        acceptance: Option<String>,
-
-        /// Additional notes
-        #[arg(long)]
-        notes: Option<String>,
-
-        /// Design decisions
-        #[arg(long)]
-        design: Option<String>,
-
-        /// Shell command that must exit 0 to close
-        #[arg(long)]
-        verify: Option<String>,
-
-        /// Parent bean ID -- child gets next dot-number
-        #[arg(long)]
-        parent: Option<String>,
-
-        /// Priority P0-P4 (default: P2)
-        #[arg(long)]
-        priority: Option<u8>,
-
-        /// Comma-separated labels
-        #[arg(long)]
-        labels: Option<String>,
-
-        /// Assignee name
-        #[arg(long)]
-        assignee: Option<String>,
-
-        /// Comma-separated dependency IDs
-        #[arg(long)]
-        deps: Option<String>,
-
-        /// Comma-separated artifacts this bean produces
-        #[arg(long)]
-        produces: Option<String>,
-
-        /// Comma-separated artifacts this bean requires
-        #[arg(long)]
-        requires: Option<String>,
-
-        /// Action on verify failure: retry, retry:N, escalate, escalate:P0
-        #[arg(long)]
-        on_fail: Option<String>,
-
-        /// Skip fail-first check (allow verify to already pass)
-        #[arg(long, short = 'p')]
-        pass_ok: bool,
-
-        /// Claim the bean immediately (sets status to in_progress)
-        #[arg(long, conflicts_with = "run")]
-        claim: bool,
-
-        /// Who is claiming (requires --claim)
-        #[arg(long, requires = "claim")]
-        by: Option<String>,
-
-        /// Spawn an agent to work on this bean (requires --verify)
-        #[arg(long)]
-        run: bool,
-
-        /// Launch interactive wizard (prompts for all fields step-by-step)
-        #[arg(long, short = 'i')]
-        interactive: bool,
-
-        /// Output created bean as JSON (for piping)
-        #[arg(long)]
-        json: bool,
+        #[command(flatten)]
+        args: Box<CreateOpts>,
     },
 
     /// Display full bean details
@@ -384,14 +308,18 @@ Examples:
     /// Runs the bean's verify command first — if it exits 0, the bean is closed.
     /// If verify fails, the close is rejected unless --force is used.
     /// Multiple IDs can be passed to batch-close.
+    ///
+    /// Use --failed to mark an attempt as explicitly failed (agent giving up).
+    /// The bean stays open and the claim is released for another agent to retry.
     #[command(
         display_order = 9,
         after_help = "\
 Examples:
-  bn close 5                   Close after verify passes
-  bn close 5 6 7               Batch close
-  bn close --force 5           Skip verify (force close)
-  bn ls --ids | bn close --stdin   Close all listed beans"
+  bn close 5                              Close after verify passes
+  bn close 5 6 7                          Batch close
+  bn close --force 5                      Skip verify (force close)
+  bn close --failed 5 --reason \"blocked\"  Mark attempt as failed
+  bn ls --ids | bn close --stdin          Close all listed beans"
     )]
     Close {
         /// Bean IDs (or use --stdin to read from pipe)
@@ -403,8 +331,12 @@ Examples:
         reason: Option<String>,
 
         /// Skip verify command (force close)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "failed")]
         force: bool,
+
+        /// Mark attempt as failed (release claim, bean stays open)
+        #[arg(long)]
+        failed: bool,
 
         /// Read bean IDs from stdin (one per line)
         #[arg(long)]
@@ -492,6 +424,10 @@ Examples:
         /// Output as JSON (file paths and contents)
         #[arg(long)]
         json: bool,
+
+        /// Output only the structural summary (signatures, imports) — skip full file contents
+        #[arg(long)]
+        structure_only: bool,
     },
 
     /// Show hierarchical tree of beans
@@ -524,7 +460,11 @@ Examples:
 
     /// Project statistics
     #[command(display_order = 43)]
-    Stats,
+    Stats {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Claim a bean for work (sets status to in_progress)
     #[command(display_order = 8)]
@@ -539,6 +479,10 @@ Examples:
         /// Who is claiming (agent name or user)
         #[arg(long)]
         by: Option<String>,
+
+        /// Force claim even if verify already passes
+        #[arg(long)]
+        force: bool,
     },
 
     /// Health check -- orphans, cycles, index freshness
@@ -635,6 +579,10 @@ Examples:
         /// Skip fail-first check (allow verify to already pass)
         #[arg(long, short = 'p')]
         pass_ok: bool,
+
+        /// Timeout in seconds for the verify command (kills process on expiry)
+        #[arg(long)]
+        verify_timeout: Option<u64>,
     },
 
     /// Adopt existing beans as children of a parent
@@ -699,6 +647,10 @@ Examples:
         /// Emit JSON stream events to stdout (for programmatic consumers)
         #[arg(long)]
         json_stream: bool,
+
+        /// Run adversarial review after each successful close
+        #[arg(long)]
+        review: bool,
     },
 
     /// Interactively plan a large bean into children
@@ -777,7 +729,7 @@ Examples:
     },
 
     // -- MCP --
-    /// MCP server for IDE integration (Cursor, Windsurf, Claude Desktop, Cline)
+    /// MCP server for IDE integration (Cursor, Windsurf, Claude Desktop, Cline, etc.)
     #[command(display_order = 60)]
     Mcp {
         #[command(subcommand)]
@@ -851,6 +803,124 @@ Examples:
     /// Re-verify all facts, detect staleness
     #[command(display_order = 52, name = "verify-facts")]
     VerifyFacts,
+
+    // -- RACE --
+    /// Race N agents on the same bean, then pick the best implementation
+    ///
+    /// Spawns N agents in parallel worktrees on the same bean. All agents run to
+    /// completion (not first-wins). Then use `bn race pick <id>` to review diff stats
+    /// and merge the winner.
+    #[command(
+        display_order = 39,
+        after_help = "\
+Examples:
+  bn race 5 --copies 3            Race with 3 agents (default)
+  bn race 5 --copies 5            Race with 5 agents
+  bn race 5 --timeout 60          Kill agents after 60 minutes
+  bn race pick 5                  Review candidates and merge winner"
+    )]
+    Race {
+        #[command(subcommand)]
+        command: Option<RaceCommand>,
+
+        /// Bean ID to race (required unless using a subcommand)
+        id: Option<String>,
+
+        /// Number of parallel agents to spawn
+        #[arg(long, default_value = "3")]
+        copies: usize,
+
+        /// Max time per agent in minutes (kills agents that exceed this)
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+
+    // -- TRACE --
+    /// Walk bean lineage and dependency chain
+    ///
+    /// Shows the full context for a bean: parent chain up to root, direct children,
+    /// what it depends on, what depends on it, artifacts produced/required, and
+    /// a summary of all agent attempts.
+    #[command(
+        display_order = 41,
+        after_help = "\
+Examples:
+  bn trace 7.3              Show full trace for bean 7.3
+  bn trace 7.3 --json       Machine-readable JSON output"
+    )]
+    Trace {
+        /// Bean ID to trace
+        id: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Adversarial post-close review of a bean's implementation
+    ///
+    /// Spawns a review agent with the bean's spec + current git diff as context.
+    /// The review agent outputs a verdict: approve, request-changes, or flag.
+    ///
+    ///   approve        — labels bean as `reviewed`
+    ///   request-changes — reopens bean with review notes, labels `review-failed`
+    ///   flag           — labels bean `needs-human-review`, stays closed
+    ///
+    /// Configure the review agent in .beans/config.yaml:
+    ///   review:
+    ///     run: "pi -p 'review bean {id}: ...'"
+    ///     max_reopens: 2
+    ///
+    /// Falls back to the global `run` template if review.run is not set.
+    /// Use `bn run --review` to auto-review after every close during a run.
+    #[command(
+        display_order = 39,
+        after_help = "\
+Examples:
+  bn review 5                  Review bean 5's implementation
+  bn review 5 --diff           Include only git diff (no spec)
+  bn review 5 --model claude   Use a specific model
+  bn run --review              Auto-review after each close"
+    )]
+    Review {
+        /// Bean ID to review
+        id: String,
+
+        /// Include only the git diff, not the full bean description
+        #[arg(long)]
+        diff: bool,
+
+        /// Override model for the review agent
+        #[arg(long)]
+        model: Option<String>,
+    },
+
+    // -- SHELL COMPLETIONS --
+    /// Generate shell completions
+    ///
+    /// Prints a completion script to stdout. Add to your shell's rc file:
+    ///   bash:  eval "$(bn completions bash)"
+    ///   zsh:   eval "$(bn completions zsh)"
+    ///   fish:  bn completions fish | source
+    #[command(
+        display_order = 70,
+        after_help = "\
+Examples:
+  bn completions bash              Print bash completions
+  bn completions zsh               Print zsh completions
+  bn completions fish              Print fish completions
+  bn completions powershell        Print PowerShell completions
+
+Install permanently:
+  bash:  echo 'eval \"$(bn completions bash)\"' >> ~/.bashrc
+  zsh:   echo 'eval \"$(bn completions zsh)\"' >> ~/.zshrc
+  fish:  bn completions fish > ~/.config/fish/completions/bn.fish"
+    )]
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Subcommand)]
@@ -893,13 +963,13 @@ pub enum DepCommand {
 pub enum ConfigCommand {
     /// Get a configuration value
     Get {
-        /// Config key (run, plan, max_tokens, max_concurrent, poll_interval, auto_close_parent, max_loops)
+        /// Config key (run, plan, max_tokens, max_concurrent, poll_interval, auto_close_parent, max_loops, rules_file, file_locking, verify_timeout, extends, on_close, on_fail, post_plan, review.run, review.max_reopens)
         key: String,
     },
 
     /// Set a configuration value
     Set {
-        /// Config key (run, plan, max_tokens, max_concurrent, poll_interval, auto_close_parent, max_loops)
+        /// Config key (run, plan, max_tokens, max_concurrent, poll_interval, auto_close_parent, max_loops, rules_file, file_locking, verify_timeout, extends, on_close, on_fail, post_plan, review.run, review.max_reopens)
         key: String,
 
         /// New value
@@ -911,6 +981,21 @@ pub enum ConfigCommand {
 pub enum McpCommand {
     /// Start MCP server on stdio (JSON-RPC 2.0)
     Serve,
+}
+
+#[derive(Subcommand)]
+pub enum RaceCommand {
+    /// Review candidates and pick a winner to merge back
+    ///
+    /// Shows diff stats and verify results for each candidate.
+    /// The selected winner's branch is merged; all worktrees are cleaned up.
+    #[command(after_help = "\
+Examples:
+  bn race pick 5          Interactive pick for bean 5")]
+    Pick {
+        /// Bean ID
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -985,6 +1070,10 @@ pub enum CreateSubcommand {
         #[arg(long, short = 'p')]
         pass_ok: bool,
 
+        /// Timeout in seconds for the verify command (kills process on expiry)
+        #[arg(long)]
+        verify_timeout: Option<u64>,
+
         /// Claim the bean immediately (sets status to in_progress)
         #[arg(long, conflicts_with = "run")]
         claim: bool,
@@ -1001,4 +1090,97 @@ pub enum CreateSubcommand {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(clap::Args)]
+pub struct CreateOpts {
+    #[command(subcommand)]
+    pub subcommand: Option<CreateSubcommand>,
+
+    /// Bean title
+    pub title: Option<String>,
+
+    /// Bean title (alternative to positional arg)
+    #[arg(long, conflicts_with = "title")]
+    pub set_title: Option<String>,
+
+    /// Full description / agent context
+    #[arg(long)]
+    pub description: Option<String>,
+
+    /// Acceptance criteria
+    #[arg(long)]
+    pub acceptance: Option<String>,
+
+    /// Additional notes
+    #[arg(long)]
+    pub notes: Option<String>,
+
+    /// Design decisions
+    #[arg(long)]
+    pub design: Option<String>,
+
+    /// Shell command that must exit 0 to close
+    #[arg(long)]
+    pub verify: Option<String>,
+
+    /// Parent bean ID -- child gets next dot-number
+    #[arg(long)]
+    pub parent: Option<String>,
+
+    /// Priority P0-P4 (default: P2)
+    #[arg(long)]
+    pub priority: Option<u8>,
+
+    /// Comma-separated labels
+    #[arg(long)]
+    pub labels: Option<String>,
+
+    /// Assignee name
+    #[arg(long)]
+    pub assignee: Option<String>,
+
+    /// Comma-separated dependency IDs
+    #[arg(long)]
+    pub deps: Option<String>,
+
+    /// Comma-separated artifacts this bean produces
+    #[arg(long)]
+    pub produces: Option<String>,
+
+    /// Comma-separated artifacts this bean requires
+    #[arg(long)]
+    pub requires: Option<String>,
+
+    /// Action on verify failure: retry, retry:N, escalate, escalate:P0
+    #[arg(long)]
+    pub on_fail: Option<String>,
+
+    /// Skip fail-first check (allow verify to already pass)
+    #[arg(long, short = 'p')]
+    pub pass_ok: bool,
+
+    /// Timeout in seconds for the verify command (kills process on expiry)
+    #[arg(long)]
+    pub verify_timeout: Option<u64>,
+
+    /// Claim the bean immediately (sets status to in_progress)
+    #[arg(long, conflicts_with = "run")]
+    pub claim: bool,
+
+    /// Who is claiming (requires --claim)
+    #[arg(long, requires = "claim")]
+    pub by: Option<String>,
+
+    /// Spawn an agent to work on this bean (requires --verify)
+    #[arg(long)]
+    pub run: bool,
+
+    /// Launch interactive wizard (prompts for all fields step-by-step)
+    #[arg(long, short = 'i')]
+    pub interactive: bool,
+
+    /// Output created bean as JSON (for piping)
+    #[arg(long)]
+    pub json: bool,
 }

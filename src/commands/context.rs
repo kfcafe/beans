@@ -2,9 +2,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::bean::Bean;
+use crate::bean::{AttemptOutcome, Bean};
 use crate::config::Config;
-use crate::ctx_assembler::{assemble_context, extract_paths};
+use crate::ctx_assembler::{assemble_context, extract_paths, read_file};
 use crate::discovery::find_bean_file;
 
 /// Load project rules from the configured rules file.
@@ -43,13 +43,261 @@ fn format_rules_section(rules: &str) -> String {
     )
 }
 
+/// Format the attempt_log and notes field into a "Previous Attempts" section.
+///
+/// Returns `None` if there are no attempt notes and no bean notes — callers
+/// should skip output entirely in that case (no noise).
+fn format_attempt_notes_section(bean: &Bean) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Accumulated notes written via `bn update --note`
+    if let Some(ref notes) = bean.notes {
+        let trimmed = notes.trim();
+        if !trimmed.is_empty() {
+            parts.push(format!("Bean notes:\n{}", trimmed));
+        }
+    }
+
+    // Per-attempt notes from the attempt_log
+    let attempt_entries: Vec<String> = bean
+        .attempt_log
+        .iter()
+        .filter_map(|a| {
+            let notes = a.notes.as_deref()?.trim();
+            if notes.is_empty() {
+                return None;
+            }
+            let outcome = match a.outcome {
+                AttemptOutcome::Success => "success",
+                AttemptOutcome::Failed => "failed",
+                AttemptOutcome::Abandoned => "abandoned",
+            };
+            let agent_str = a
+                .agent
+                .as_deref()
+                .map(|ag| format!(" ({})", ag))
+                .unwrap_or_default();
+            Some(format!(
+                "Attempt #{}{} [{}]: {}",
+                a.num, agent_str, outcome, notes
+            ))
+        })
+        .collect();
+
+    if !attempt_entries.is_empty() {
+        parts.push(attempt_entries.join("\n"));
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "═══ Previous Attempts ════════════════════════════════════════\n\
+         {}\n\
+         ══════════════════════════════════════════════════════════════\n\n",
+        parts.join("\n\n").trim_end()
+    ))
+}
+
+// ─── Structure extraction ────────────────────────────────────────────────────
+
+/// Extract function/type signatures and imports from Rust source.
+///
+/// Matches top-level declarations: `use`, `fn`, `struct`, `enum`, `trait`,
+/// `impl`, `type`, and `const`. Strips trailing `{` from signature lines.
+fn extract_rust_structure(content: &str) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.is_empty()
+            || trimmed.starts_with("//")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+        {
+            continue;
+        }
+
+        // Imports
+        if trimmed.starts_with("use ") {
+            result.push(trimmed.to_string());
+            continue;
+        }
+
+        // Declarations: check common prefixes
+        let is_decl = trimmed.starts_with("pub fn ")
+            || trimmed.starts_with("pub async fn ")
+            || trimmed.starts_with("pub(crate) fn ")
+            || trimmed.starts_with("pub(crate) async fn ")
+            || trimmed.starts_with("fn ")
+            || trimmed.starts_with("async fn ")
+            || trimmed.starts_with("pub struct ")
+            || trimmed.starts_with("pub(crate) struct ")
+            || trimmed.starts_with("struct ")
+            || trimmed.starts_with("pub enum ")
+            || trimmed.starts_with("pub(crate) enum ")
+            || trimmed.starts_with("enum ")
+            || trimmed.starts_with("pub trait ")
+            || trimmed.starts_with("pub(crate) trait ")
+            || trimmed.starts_with("trait ")
+            || trimmed.starts_with("pub type ")
+            || trimmed.starts_with("type ")
+            || trimmed.starts_with("impl ")
+            || trimmed.starts_with("pub const ")
+            || trimmed.starts_with("pub(crate) const ")
+            || trimmed.starts_with("const ")
+            || trimmed.starts_with("pub static ")
+            || trimmed.starts_with("static ");
+
+        if is_decl {
+            // Take the signature line; strip trailing `{` and whitespace
+            let sig = trimmed.trim_end_matches('{').trim_end();
+            result.push(sig.to_string());
+        }
+    }
+
+    result
+}
+
+/// Extract function/type signatures and imports from TypeScript/TSX source.
+///
+/// Matches: `import`, `export function`, `function`, `class`, `interface`,
+/// `export type`, `export const`, `export enum`, and their async variants.
+fn extract_ts_structure(content: &str) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.is_empty()
+            || trimmed.starts_with("//")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+        {
+            continue;
+        }
+
+        // Imports
+        if trimmed.starts_with("import ") {
+            result.push(trimmed.to_string());
+            continue;
+        }
+
+        let is_decl = trimmed.starts_with("export function ")
+            || trimmed.starts_with("export async function ")
+            || trimmed.starts_with("export default function ")
+            || trimmed.starts_with("function ")
+            || trimmed.starts_with("async function ")
+            || trimmed.starts_with("export class ")
+            || trimmed.starts_with("export abstract class ")
+            || trimmed.starts_with("class ")
+            || trimmed.starts_with("export interface ")
+            || trimmed.starts_with("interface ")
+            || trimmed.starts_with("export type ")
+            || trimmed.starts_with("export enum ")
+            || trimmed.starts_with("export const ")
+            || trimmed.starts_with("export default class ")
+            || trimmed.starts_with("export default async function ");
+
+        if is_decl {
+            let sig = trimmed.trim_end_matches('{').trim_end();
+            result.push(sig.to_string());
+        }
+    }
+
+    result
+}
+
+/// Extract function/class definitions and imports from Python source.
+///
+/// Matches top-level `def`, `async def`, `class`, `import`, and `from` lines.
+/// Strips trailing `:` from definition signatures.
+fn extract_python_structure(content: &str) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Top-level imports (no indentation)
+        if line.starts_with("import ") || line.starts_with("from ") {
+            result.push(trimmed.to_string());
+            continue;
+        }
+
+        // Top-level and nested defs/classes — capture the signature line
+        if trimmed.starts_with("def ")
+            || trimmed.starts_with("async def ")
+            || trimmed.starts_with("class ")
+        {
+            let sig = trimmed.trim_end_matches(':').trim_end();
+            result.push(sig.to_string());
+        }
+    }
+
+    result
+}
+
+/// Extract a structural summary (signatures, imports) from file content.
+///
+/// Dispatches to language-specific extractors based on file extension.
+/// Returns `None` for unrecognized file types or when no structure is found.
+/// Silently skips unrecognized types — no error is returned.
+pub fn extract_file_structure(path: &str, content: &str) -> Option<String> {
+    let ext = Path::new(path).extension()?.to_str()?;
+
+    let lines: Vec<String> = match ext {
+        "rs" => extract_rust_structure(content),
+        "ts" | "tsx" => extract_ts_structure(content),
+        "py" => extract_python_structure(content),
+        _ => return None,
+    };
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    Some(lines.join("\n"))
+}
+
+/// Format multiple file structures into a single "File Structure" section.
+///
+/// Each entry is `(path, structure_text)`. Returns `None` if the input is empty.
+fn format_structure_block(structures: &[(&str, String)]) -> Option<String> {
+    if structures.is_empty() {
+        return None;
+    }
+
+    let mut body = String::new();
+    for (path, structure) in structures {
+        body.push_str(&format!("### {}\n```\n{}\n```\n\n", path, structure));
+    }
+
+    Some(format!(
+        "═══ File Structure ═══════════════════════════════════════════\n\
+         {}\
+         ══════════════════════════════════════════════════════════════\n\n",
+        body
+    ))
+}
+
+// ─── Command ─────────────────────────────────────────────────────────────────
+
 /// Assemble context for a bean from its description and referenced files.
 ///
 /// Extracts file paths mentioned in the bean's description and outputs
 /// the content of those files in a markdown format suitable for LLM prompts.
 /// If a `.beans/RULES.md` file exists, its contents are prepended as a
 /// "Project Rules" section before the bean-specific context.
-pub fn cmd_context(beans_dir: &Path, id: &str, json: bool) -> Result<()> {
+///
+/// When `structure_only` is true, only the structural summary (signatures,
+/// imports) is emitted — full file contents are skipped.
+pub fn cmd_context(beans_dir: &Path, id: &str, json: bool, structure_only: bool) -> Result<()> {
     let bean_path =
         find_bean_file(beans_dir, id).context(format!("Could not find bean with ID: {}", id))?;
 
@@ -70,11 +318,17 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool) -> Result<()> {
     // Load project rules (silently skipped if missing/empty)
     let rules = load_rules(beans_dir);
 
+    // Build attempt notes section (used in both text and JSON modes)
+    let attempt_notes_section = format_attempt_notes_section(&bean);
+
     if paths.is_empty() {
         if json {
             let mut obj = serde_json::json!({"id": id, "files": []});
             if let Some(ref rules_content) = rules {
                 obj["rules"] = serde_json::Value::String(rules_content.clone());
+            }
+            if let Some(ref notes) = attempt_notes_section {
+                obj["attempt_notes"] = serde_json::Value::String(notes.clone());
             }
             println!("{}", obj);
         } else {
@@ -82,27 +336,78 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool) -> Result<()> {
             if let Some(ref rules_content) = rules {
                 print!("{}", format_rules_section(rules_content));
             }
+            if let Some(ref notes) = attempt_notes_section {
+                print!("{}", notes);
+            }
             eprintln!("No file paths found in bean description.");
             eprintln!("Tip: Reference files in description with paths like 'src/foo.rs' or 'src/commands/bar.rs'");
         }
         return Ok(());
     }
 
-    if json {
-        // Output as JSON: array of {path, content} objects
-        let mut files = Vec::new();
-        for path_str in &paths {
-            let full_path = project_dir.join(path_str);
-            let content = if full_path.exists() {
-                std::fs::read_to_string(&full_path).unwrap_or_else(|_| "(read error)".to_string())
+    // Read file contents and extract structure for all referenced paths.
+    // We do this upfront so both JSON and text modes share the same data.
+    struct FileEntry {
+        path: String,
+        content: Option<String>,
+        structure: Option<String>,
+    }
+
+    let canonical_base = project_dir.canonicalize().context("Cannot canonicalize project dir")?;
+
+    let mut entries: Vec<FileEntry> = Vec::new();
+    for path_str in &paths {
+        let full_path = project_dir.join(path_str);
+        let canonical = full_path.canonicalize().ok();
+
+        // Security: reject paths that escape the project directory
+        let in_bounds = canonical
+            .as_ref()
+            .map(|c| c.starts_with(&canonical_base))
+            .unwrap_or(false);
+
+        let content = if let Some(ref c) = canonical {
+            if in_bounds {
+                read_file(c).ok()
             } else {
-                "(not found)".to_string()
-            };
-            files.push(serde_json::json!({
-                "path": path_str,
-                "exists": full_path.exists(),
-                "content": content,
-            }));
+                None
+            }
+        } else {
+            None
+        };
+
+        let structure = content
+            .as_deref()
+            .and_then(|c| extract_file_structure(path_str, c));
+
+        entries.push(FileEntry {
+            path: path_str.clone(),
+            content,
+            structure,
+        });
+    }
+
+    if json {
+        // Output as JSON: array of {path, content, structure} objects
+        let mut files = Vec::new();
+        for entry in &entries {
+            let exists = entry.content.is_some();
+            let content_val = entry
+                .content
+                .as_deref()
+                .unwrap_or("(not found)")
+                .to_string();
+            let mut file_obj = serde_json::json!({
+                "path": entry.path,
+                "exists": exists,
+            });
+            if !structure_only {
+                file_obj["content"] = serde_json::Value::String(content_val);
+            }
+            if let Some(ref s) = entry.structure {
+                file_obj["structure"] = serde_json::Value::String(s.clone());
+            }
+            files.push(file_obj);
         }
         let mut obj = serde_json::json!({
             "id": id,
@@ -110,6 +415,9 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool) -> Result<()> {
         });
         if let Some(ref rules_content) = rules {
             obj["rules"] = serde_json::Value::String(rules_content.clone());
+        }
+        if let Some(ref notes) = attempt_notes_section {
+            obj["attempt_notes"] = serde_json::Value::String(notes.clone());
         }
         println!("{}", serde_json::to_string_pretty(&obj)?);
     } else {
@@ -120,9 +428,32 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool) -> Result<()> {
             output.push_str(&format_rules_section(rules_content));
         }
 
-        // Assemble the bean-specific context from referenced files
-        let context = assemble_context(paths, project_dir).context("Failed to assemble context")?;
-        output.push_str(&context);
+        // Prepend previous attempt notes if any exist
+        if let Some(ref notes) = attempt_notes_section {
+            output.push_str(notes);
+        }
+
+        // Build and emit structural summaries (before full file contents)
+        let structure_pairs: Vec<(&str, String)> = entries
+            .iter()
+            .filter_map(|e| {
+                e.structure
+                    .as_ref()
+                    .map(|s| (e.path.as_str(), s.clone()))
+            })
+            .collect();
+
+        if let Some(structure_block) = format_structure_block(&structure_pairs) {
+            output.push_str(&structure_block);
+        }
+
+        // Emit full file contents unless --structure-only was requested
+        if !structure_only {
+            let file_paths: Vec<String> = paths.clone();
+            let context =
+                assemble_context(file_paths, project_dir).context("Failed to assemble context")?;
+            output.push_str(&context);
+        }
 
         // Output the assembled markdown to stdout
         print!("{}", output);
@@ -146,7 +477,7 @@ mod tests {
 
     #[test]
     fn context_with_no_paths_in_description() {
-        let (dir, beans_dir) = setup_test_env();
+        let (_dir, beans_dir) = setup_test_env();
 
         // Create a bean with no file paths in description
         let mut bean = crate::bean::Bean::new("1", "Test bean");
@@ -156,7 +487,7 @@ mod tests {
         bean.to_file(&bean_path).unwrap();
 
         // Should succeed but print a tip
-        let result = cmd_context(&beans_dir, "1", false);
+        let result = cmd_context(&beans_dir, "1", false, false);
         assert!(result.is_ok());
     }
 
@@ -177,7 +508,7 @@ mod tests {
         let bean_path = beans_dir.join(format!("1-{}.md", slug));
         bean.to_file(&bean_path).unwrap();
 
-        let result = cmd_context(&beans_dir, "1", false);
+        let result = cmd_context(&beans_dir, "1", false, false);
         assert!(result.is_ok());
     }
 
@@ -185,7 +516,205 @@ mod tests {
     fn context_bean_not_found() {
         let (_dir, beans_dir) = setup_test_env();
 
-        let result = cmd_context(&beans_dir, "999", false);
+        let result = cmd_context(&beans_dir, "999", false, false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_rules_returns_none_when_file_missing() {
+        let (_dir, beans_dir) = setup_test_env();
+        // Write a minimal config so Config::load succeeds
+        fs::write(
+            beans_dir.join("config.yaml"),
+            "project: test\nnext_id: 1\n",
+        )
+        .unwrap();
+
+        let result = load_rules(&beans_dir);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_rules_returns_none_when_file_empty() {
+        let (_dir, beans_dir) = setup_test_env();
+        fs::write(
+            beans_dir.join("config.yaml"),
+            "project: test\nnext_id: 1\n",
+        )
+        .unwrap();
+        fs::write(beans_dir.join("RULES.md"), "   \n\n  ").unwrap();
+
+        let result = load_rules(&beans_dir);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_rules_returns_content_when_present() {
+        let (_dir, beans_dir) = setup_test_env();
+        fs::write(
+            beans_dir.join("config.yaml"),
+            "project: test\nnext_id: 1\n",
+        )
+        .unwrap();
+        fs::write(beans_dir.join("RULES.md"), "# My Rules\nNo unwrap.\n").unwrap();
+
+        let result = load_rules(&beans_dir);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("No unwrap."));
+    }
+
+    #[test]
+    fn load_rules_uses_custom_rules_file_path() {
+        let (_dir, beans_dir) = setup_test_env();
+        fs::write(
+            beans_dir.join("config.yaml"),
+            "project: test\nnext_id: 1\nrules_file: custom-rules.md\n",
+        )
+        .unwrap();
+        fs::write(beans_dir.join("custom-rules.md"), "Custom rules here").unwrap();
+
+        let result = load_rules(&beans_dir);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Custom rules here"));
+    }
+
+    #[test]
+    fn format_rules_section_wraps_with_delimiters() {
+        let output = format_rules_section("# Rules\nBe nice.\n");
+        assert!(output.starts_with("═══ PROJECT RULES"));
+        assert!(output.contains("# Rules\nBe nice."));
+        assert!(output.ends_with("═════════════════════════════════════════════════════════════\n\n"));
+    }
+
+    // --- attempt notes tests ---
+
+    fn make_bean_with_attempts() -> crate::bean::Bean {
+        use crate::bean::{AttemptOutcome, AttemptRecord};
+        let mut bean = crate::bean::Bean::new("1", "Test bean");
+        bean.attempt_log = vec![
+            AttemptRecord {
+                num: 1,
+                outcome: AttemptOutcome::Abandoned,
+                notes: Some("Tried X, hit bug Y".to_string()),
+                agent: Some("pi-agent".to_string()),
+                started_at: None,
+                finished_at: None,
+            },
+            AttemptRecord {
+                num: 2,
+                outcome: AttemptOutcome::Failed,
+                notes: Some("Fixed Y, now Z fails".to_string()),
+                agent: None,
+                started_at: None,
+                finished_at: None,
+            },
+        ];
+        bean
+    }
+
+    #[test]
+    fn format_attempt_notes_returns_none_when_no_notes() {
+        let bean = crate::bean::Bean::new("1", "Empty bean");
+        // No attempt_log, no notes
+        let result = format_attempt_notes_section(&bean);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn format_attempt_notes_returns_none_when_attempts_have_no_notes() {
+        use crate::bean::{AttemptOutcome, AttemptRecord};
+        let mut bean = crate::bean::Bean::new("1", "Empty bean");
+        bean.attempt_log = vec![AttemptRecord {
+            num: 1,
+            outcome: AttemptOutcome::Abandoned,
+            notes: None,
+            agent: None,
+            started_at: None,
+            finished_at: None,
+        }];
+        let result = format_attempt_notes_section(&bean);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn format_attempt_notes_includes_attempt_log_notes() {
+        let bean = make_bean_with_attempts();
+        let result = format_attempt_notes_section(&bean).expect("should produce output");
+        assert!(result.contains("Previous Attempts"), "should have section header");
+        assert!(result.contains("Attempt #1"), "should include attempt 1");
+        assert!(result.contains("pi-agent"), "should include agent name");
+        assert!(result.contains("abandoned"), "should include outcome");
+        assert!(result.contains("Tried X, hit bug Y"), "should include notes text");
+        assert!(result.contains("Attempt #2"), "should include attempt 2");
+        assert!(result.contains("Fixed Y, now Z fails"), "should include attempt 2 notes");
+    }
+
+    #[test]
+    fn format_attempt_notes_includes_bean_notes() {
+        let mut bean = crate::bean::Bean::new("1", "Test bean");
+        bean.notes = Some("Watch out for edge cases".to_string());
+        let result = format_attempt_notes_section(&bean).expect("should produce output");
+        assert!(result.contains("Watch out for edge cases"));
+        assert!(result.contains("Bean notes:"));
+    }
+
+    #[test]
+    fn format_attempt_notes_skips_empty_notes_strings() {
+        use crate::bean::{AttemptOutcome, AttemptRecord};
+        let mut bean = crate::bean::Bean::new("1", "Test bean");
+        bean.notes = Some("   ".to_string()); // whitespace only
+        bean.attempt_log = vec![AttemptRecord {
+            num: 1,
+            outcome: AttemptOutcome::Abandoned,
+            notes: Some("  ".to_string()), // whitespace only
+            agent: None,
+            started_at: None,
+            finished_at: None,
+        }];
+        let result = format_attempt_notes_section(&bean);
+        assert!(result.is_none(), "whitespace-only notes should produce no output");
+    }
+
+    #[test]
+    fn context_includes_attempt_notes_in_text_output() {
+        let (dir, beans_dir) = setup_test_env();
+        let project_dir = dir.path();
+
+        // Create a source file
+        let src_dir = project_dir.join("src");
+        fs::create_dir(&src_dir).unwrap();
+        fs::write(src_dir.join("foo.rs"), "fn main() {}").unwrap();
+
+        // Create a bean with attempt notes
+        let mut bean = make_bean_with_attempts();
+        bean.id = "1".to_string();
+        bean.description = Some("Check src/foo.rs for implementation".to_string());
+        let slug = crate::util::title_to_slug(&bean.title);
+        let bean_path = beans_dir.join(format!("1-{}.md", slug));
+        bean.to_file(&bean_path).unwrap();
+
+        // The function prints to stdout — just verify it runs without error
+        let result = cmd_context(&beans_dir, "1", false, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn context_includes_attempt_notes_in_json_output() {
+        let (dir, beans_dir) = setup_test_env();
+        let project_dir = dir.path();
+
+        let src_dir = project_dir.join("src");
+        fs::create_dir(&src_dir).unwrap();
+        fs::write(src_dir.join("foo.rs"), "fn main() {}").unwrap();
+
+        let mut bean = make_bean_with_attempts();
+        bean.id = "1".to_string();
+        bean.description = Some("Check src/foo.rs for implementation".to_string());
+        let slug = crate::util::title_to_slug(&bean.title);
+        let bean_path = beans_dir.join(format!("1-{}.md", slug));
+        bean.to_file(&bean_path).unwrap();
+
+        let result = cmd_context(&beans_dir, "1", true, false);
+        assert!(result.is_ok());
     }
 }

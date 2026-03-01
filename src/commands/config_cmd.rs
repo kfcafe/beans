@@ -18,6 +18,9 @@ pub fn cmd_config_get(beans_dir: &Path, key: &str) -> Result<()> {
         "max_concurrent" => config.max_concurrent.to_string(),
         "poll_interval" => config.poll_interval.to_string(),
         "rules_file" => config.rules_file.unwrap_or_else(|| "RULES.md".to_string()),
+        "on_close" => config.on_close.unwrap_or_default(),
+        "on_fail" => config.on_fail.unwrap_or_default(),
+        "post_plan" => config.post_plan.unwrap_or_default(),
         _ => return Err(anyhow!("Unknown config key: {}", key)),
     };
 
@@ -89,6 +92,27 @@ pub fn cmd_config_set(beans_dir: &Path, key: &str, value: &str) -> Result<()> {
                 config.rules_file = None;
             } else {
                 config.rules_file = Some(value.to_string());
+            }
+        }
+        "on_close" => {
+            if value.is_empty() || value == "none" || value == "unset" {
+                config.on_close = None;
+            } else {
+                config.on_close = Some(value.to_string());
+            }
+        }
+        "on_fail" => {
+            if value.is_empty() || value == "none" || value == "unset" {
+                config.on_fail = None;
+            } else {
+                config.on_fail = Some(value.to_string());
+            }
+        }
+        "post_plan" => {
+            if value.is_empty() || value == "none" || value == "unset" {
+                config.post_plan = None;
+            } else {
+                config.post_plan = Some(value.to_string());
             }
         }
         _ => return Err(anyhow!("Unknown config key: {}", key)),

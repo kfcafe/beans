@@ -1,7 +1,8 @@
 use regex::Regex;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Component, Path};
 use std::sync::LazyLock;
 
 // Compiled once, reused across all calls
@@ -28,7 +29,7 @@ static PATH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// A Vec of deduplicated file paths in order of appearance
 pub fn extract_paths(description: &str) -> Vec<String> {
     let mut result = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
 
     for cap in PATH_REGEX.captures_iter(description) {
         if let Some(path) = cap.get(1) {
@@ -47,6 +48,15 @@ pub fn extract_paths(description: &str) -> Vec<String> {
                 continue;
             }
 
+            // Reject path traversal: any path containing ".." components
+            // could escape the project directory
+            if Path::new(path_str)
+                .components()
+                .any(|c| matches!(c, Component::ParentDir))
+            {
+                continue;
+            }
+
             // Deduplicate and add to result
             if seen.insert(path_str.to_string()) {
                 result.push(path_str.to_string());
@@ -57,6 +67,11 @@ pub fn extract_paths(description: &str) -> Vec<String> {
     result
 }
 
+/// Maximum file size to read (1 MB). Files referenced in bean descriptions
+/// are embedded into LLM prompts, so reading very large files is wasteful
+/// and risks unbounded memory usage.
+const MAX_FILE_SIZE: u64 = 1_024 * 1_024;
+
 /// Reads a file from disk and returns its contents as a string.
 ///
 /// # Arguments
@@ -64,17 +79,29 @@ pub fn extract_paths(description: &str) -> Vec<String> {
 ///
 /// # Returns
 /// * `Ok(String)` - The file contents
-/// * `Err` - If the file doesn't exist, is not readable, or appears to be binary
+/// * `Err` - If the file doesn't exist, is too large, is binary, or is not valid UTF-8
 ///
 /// # Behavior
-/// - Returns an error with descriptive message if file is missing
-/// - Detects and skips binary files (checks for null bytes)
-/// - Warns to stderr when skipping binary files
+/// - Rejects files larger than 1 MB
+/// - Reads raw bytes first, then checks for binary content (null bytes)
+/// - Converts to UTF-8 only after binary check passes
 pub fn read_file(path: &Path) -> io::Result<String> {
-    let content = fs::read_to_string(path)?;
+    let metadata = fs::metadata(path)?;
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "File too large ({} bytes, max {})",
+                metadata.len(),
+                MAX_FILE_SIZE
+            ),
+        ));
+    }
 
-    // Check for binary files by looking for null bytes
-    if content.contains('\0') {
+    // Read raw bytes first so we can detect binary files that aren't valid UTF-8
+    let bytes = fs::read(path)?;
+
+    if bytes.contains(&0) {
         eprintln!("Warning: Skipping binary file: {}", path.display());
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -82,7 +109,12 @@ pub fn read_file(path: &Path) -> io::Result<String> {
         ));
     }
 
-    Ok(content)
+    String::from_utf8(bytes).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "File is not valid UTF-8",
+        )
+    })
 }
 
 /// Detects the programming language from a file extension.
@@ -129,26 +161,50 @@ pub fn format_file_block(path: &str, content: &str) -> String {
 /// Assembles context from multiple files into a single markdown document.
 ///
 /// # Arguments
-/// * `paths` - Vector of file paths to include
+/// * `paths` - File paths to include
 /// * `base_dir` - The base directory to resolve relative paths against
 ///
 /// # Returns
-/// * `Ok(String)` - Valid markdown containing all files
-/// * `Err` - If no files could be read
+/// * `Ok(String)` - Markdown containing all readable files (empty if none succeed)
+/// * `Err` - If `base_dir` cannot be canonicalized
 ///
 /// # Behavior
-/// - Reads each file using read_file()
-/// - Formats each using format_file_block()
-/// - Skips files that can't be read (with stderr warning)
+/// - Validates each resolved path stays within `base_dir` (prevents directory traversal)
+/// - Skips files that escape the project directory, can't be read, or are binary/too large
 /// - Continues even if some files fail
-/// - Returns empty string if all files fail
 pub fn assemble_context(paths: Vec<String>, base_dir: &Path) -> io::Result<String> {
+    let canonical_base = base_dir.canonicalize().map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("Cannot canonicalize base directory {}: {}", base_dir.display(), e),
+        )
+    })?;
+
     let mut output = String::new();
 
     for path_str in paths {
         let full_path = base_dir.join(&path_str);
 
-        match read_file(&full_path) {
+        // Canonicalize the resolved path and verify it stays within the project.
+        // This catches symlinks and any traversal that survived extract_paths filtering.
+        let canonical = match full_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                // File doesn't exist or can't be resolved — skip silently
+                eprintln!("Warning: Could not read file {}: not found", path_str);
+                continue;
+            }
+        };
+
+        if !canonical.starts_with(&canonical_base) {
+            eprintln!(
+                "Warning: Skipping file outside project directory: {}",
+                path_str
+            );
+            continue;
+        }
+
+        match read_file(&canonical) {
             Ok(content) => {
                 output.push_str(&format_file_block(&path_str, &content));
                 output.push('\n');
@@ -333,6 +389,32 @@ mod tests {
         assert_eq!(result, vec!["src/v2/main.rs", "test_1.rs"]);
     }
 
+    // Tests for path traversal rejection
+    #[test]
+    fn test_rejects_parent_traversal() {
+        let result = extract_paths("Read ../../etc/shadow.md for secrets");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_rejects_mid_path_traversal() {
+        let result = extract_paths("Check src/../../../.ssh/config.json");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_rejects_traversal_keeps_valid() {
+        let result = extract_paths("Check src/main.rs and ../../etc/passwd.yaml");
+        assert_eq!(result, vec!["src/main.rs"]);
+    }
+
+    #[test]
+    fn test_allows_dots_in_filenames() {
+        // ".." as a path component is rejected, but dots in filenames are fine
+        let result = extract_paths("Check src/my.module.rs");
+        assert_eq!(result, vec!["src/my.module.rs"]);
+    }
+
     // Tests for read_file function
     #[test]
     fn test_read_file_success() {
@@ -362,6 +444,32 @@ mod tests {
         fs::write(&binary_file, binary_content).unwrap();
 
         let result = read_file(&binary_file);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_file_rejects_oversized() {
+        let temp_dir = TempDir::new().unwrap();
+        let big_file = temp_dir.path().join("huge.rs");
+        let content = "x".repeat(1_024 * 1_024 + 1);
+        fs::write(&big_file, &content).unwrap();
+
+        let result = read_file(&big_file);
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("too large"),
+            "Error message should mention size"
+        );
+    }
+
+    #[test]
+    fn test_read_file_rejects_non_utf8() {
+        let temp_dir = TempDir::new().unwrap();
+        let bad_file = temp_dir.path().join("bad.rs");
+        // Invalid UTF-8 sequence without null bytes
+        fs::write(&bad_file, &[0xFF, 0xFE, 0x41, 0x42]).unwrap();
+
+        let result = read_file(&bad_file);
         assert!(result.is_err());
     }
 
@@ -546,6 +654,29 @@ mod tests {
         let result = assemble_context(vec![], temp_dir.path()).unwrap();
 
         assert_eq!(result.trim(), "");
+    }
+
+    #[test]
+    fn test_assemble_context_rejects_symlink_escape() {
+        let temp_dir = TempDir::new().unwrap();
+        let project = temp_dir.path().join("project");
+        fs::create_dir(&project).unwrap();
+
+        // Create a secret file outside the project
+        let secret = temp_dir.path().join("secret.json");
+        fs::write(&secret, r#"{"api_key": "leaked"}"#).unwrap();
+
+        // Create a symlink inside the project pointing outside
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&secret, project.join("secret.json")).unwrap();
+            let result =
+                assemble_context(vec!["secret.json".to_string()], &project).unwrap();
+            assert!(
+                !result.contains("leaked"),
+                "Symlink escape should be blocked"
+            );
+        }
     }
 
     #[test]

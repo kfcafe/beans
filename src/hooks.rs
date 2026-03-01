@@ -1,10 +1,14 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use crate::bean::Bean;
+
+/// Maximum time to wait for a hook script before killing it.
+const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ---------------------------------------------------------------------------
 // HookEvent Enum
@@ -58,8 +62,7 @@ impl HookPayload {
 
     /// Serialize this payload to JSON.
     pub fn to_json(&self) -> Result<String> {
-        serde_json::to_string(self)
-            .map_err(|e| anyhow!("Failed to serialize payload to JSON: {}", e))
+        serde_json::to_string(self).context("Failed to serialize hook payload to JSON")
     }
 }
 
@@ -124,9 +127,9 @@ pub fn is_hook_executable(path: &Path) -> bool {
 ///
 /// # Returns
 ///
-/// * `Ok(true)` - Hook executed successfully and returned exit code 0
+/// * `Ok(true)` - Hook passed (exit 0), or hook doesn't exist, or hooks not trusted
 /// * `Ok(false)` - Hook executed but returned non-zero exit code
-/// * `Err` - Hook not found, not executable, timeout, or I/O error
+/// * `Err` - Hook exists but not executable, timeout, or I/O error
 pub fn execute_hook(
     event: HookEvent,
     bean: &Bean,
@@ -159,52 +162,49 @@ pub fn execute_hook(
     let payload = HookPayload::new(event, bean.clone(), reason);
     let json_payload = payload.to_json()?;
 
-    // Spawn the subprocess
+    // Spawn the subprocess. stdout/stderr are discarded — hooks communicate
+    // exclusively via exit code. Using Stdio::null() instead of Stdio::piped()
+    // prevents deadlock: piped() without draining blocks the child once OS pipe
+    // buffers fill (~64KB), causing it to hang until the timeout kills it.
     let mut child = Command::new(&hook_path)
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| anyhow!("Failed to spawn hook process: {}", e))?;
+        .with_context(|| format!("Failed to spawn hook {}", hook_path.display()))?;
 
-    // Write JSON to stdin
+    // Write JSON payload to stdin, then close the pipe
     {
         let stdin = child
             .stdin
             .as_mut()
-            .ok_or_else(|| anyhow!("Failed to open stdin"))?;
-        use std::io::Write;
+            .ok_or_else(|| anyhow!("Failed to open stdin for hook"))?;
         stdin
             .write_all(json_payload.as_bytes())
-            .map_err(|e| anyhow!("Failed to write payload to hook stdin: {}", e))?;
-        // stdin is dropped here, closing the pipe
+            .context("Failed to write payload to hook stdin")?;
     }
 
-    // Wait for the process with a 30-second timeout
-    let timeout = Duration::from_secs(30);
+    // Poll for completion with timeout
     let start = std::time::Instant::now();
-
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                // Process completed
-                return Ok(status.success());
-            }
+            Ok(Some(status)) => return Ok(status.success()),
             Ok(None) => {
-                // Process still running
-                if start.elapsed() > timeout {
-                    // Timeout exceeded, kill the process
+                if start.elapsed() > HOOK_TIMEOUT {
                     let _ = child.kill();
+                    let _ = child.wait(); // Reap to prevent zombie process
                     return Err(anyhow!(
-                        "Hook execution timed out after {} seconds",
-                        timeout.as_secs()
+                        "Hook {} timed out after {}s",
+                        hook_path.display(),
+                        HOOK_TIMEOUT.as_secs()
                     ));
                 }
-                // Sleep briefly before checking again
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
-                return Err(anyhow!("Failed to wait for hook process: {}", e));
+                return Err(
+                    anyhow!(e).context(format!("Failed to wait for hook {}", hook_path.display()))
+                );
             }
         }
     }
@@ -231,16 +231,13 @@ pub fn is_trusted(project_dir: &Path) -> bool {
 pub fn create_trust(project_dir: &Path) -> Result<()> {
     let trust_path = project_dir.join(".beans").join(".hooks-trusted");
 
-    // Ensure .beans directory exists
-    std::fs::create_dir_all(
-        trust_path
-            .parent()
-            .ok_or_else(|| anyhow!("Invalid trust path"))?,
-    )?;
+    let parent = trust_path
+        .parent()
+        .ok_or_else(|| anyhow!("Invalid trust path"))?;
+    std::fs::create_dir_all(parent).context("Failed to create .beans directory for trust file")?;
 
-    // Create the trust file with metadata
     let metadata = format!("Hooks enabled at {}\n", chrono::Utc::now());
-    std::fs::write(&trust_path, metadata).map_err(|e| anyhow!("Failed to create trust file: {}", e))
+    std::fs::write(&trust_path, metadata).context("Failed to create trust file")
 }
 
 /// Revoke hook trust by deleting the .beans/.hooks-trusted file.
@@ -256,7 +253,119 @@ pub fn revoke_trust(project_dir: &Path) -> Result<()> {
         return Err(anyhow!("Trust file does not exist"));
     }
 
-    std::fs::remove_file(&trust_path).map_err(|e| anyhow!("Failed to revoke trust: {}", e))
+    std::fs::remove_file(&trust_path).context("Failed to revoke hook trust")
+}
+
+// ---------------------------------------------------------------------------
+// Config-Based Hooks (on_close, on_fail, post_plan)
+// ---------------------------------------------------------------------------
+
+/// Template variables for config hook expansion.
+///
+/// Each field maps to a `{name}` placeholder in the hook command template.
+/// Missing variables are left as-is (e.g., `{attempt}` stays literal if not set).
+#[derive(Debug, Default)]
+pub struct HookVars {
+    pub id: Option<String>,
+    pub title: Option<String>,
+    pub status: Option<String>,
+    pub attempt: Option<u32>,
+    pub output: Option<String>,
+    pub parent: Option<String>,
+    pub children: Option<String>,
+    pub branch: Option<String>,
+}
+
+/// Expand template variables in a hook command string.
+///
+/// Replaces `{name}` placeholders with values from `vars`.
+/// Unknown or unset variables are left as-is.
+/// The `{output}` variable is truncated to 1000 chars.
+pub fn expand_template(template: &str, vars: &HookVars) -> String {
+    let mut result = template.to_string();
+
+    if let Some(ref v) = vars.id {
+        result = result.replace("{id}", v);
+    }
+    if let Some(ref v) = vars.title {
+        result = result.replace("{title}", v);
+    }
+    if let Some(ref v) = vars.status {
+        result = result.replace("{status}", v);
+    }
+    if let Some(attempt) = vars.attempt {
+        result = result.replace("{attempt}", &attempt.to_string());
+    }
+    if let Some(ref v) = vars.output {
+        // Truncate output to 1000 chars
+        let truncated = if v.len() > 1000 { &v[..1000] } else { v.as_str() };
+        result = result.replace("{output}", truncated);
+    }
+    if let Some(ref v) = vars.parent {
+        result = result.replace("{parent}", v);
+    }
+    if let Some(ref v) = vars.children {
+        result = result.replace("{children}", v);
+    }
+    if let Some(ref v) = vars.branch {
+        result = result.replace("{branch}", v);
+    }
+
+    result
+}
+
+/// Get the current git branch name, or None if not in a git repo.
+pub fn current_git_branch() -> Option<String> {
+    Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
+/// Execute a config-based hook command asynchronously.
+///
+/// The command is expanded with template variables, then spawned via `sh -c`.
+/// The subprocess runs in the background — we don't wait for it.
+/// Any errors during spawn are logged to stderr but never propagated.
+///
+/// # Arguments
+///
+/// * `hook_name` - Name for logging (e.g., "on_close", "on_fail")
+/// * `template` - The command template with `{var}` placeholders
+/// * `vars` - Template variables to expand
+/// * `project_dir` - Working directory for the subprocess
+pub fn execute_config_hook(
+    hook_name: &str,
+    template: &str,
+    vars: &HookVars,
+    project_dir: &Path,
+) {
+    let cmd = expand_template(template, vars);
+
+    match Command::new("sh")
+        .args(["-c", &cmd])
+        .current_dir(project_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(_child) => {
+            // Fire-and-forget: don't wait for completion
+        }
+        Err(e) => {
+            eprintln!("Warning: {} hook failed to spawn: {}", hook_name, e);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -666,5 +775,152 @@ mod tests {
         let result = execute_hook(HookEvent::PreCreate, &bean, project_dir, None);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), true);
+    }
+
+    // =====================================================================
+    // Template Expansion Tests
+    // =====================================================================
+
+    #[test]
+    fn test_expand_template_with_all_vars() {
+        let vars = HookVars {
+            id: Some("42".into()),
+            title: Some("Fix the bug".into()),
+            status: Some("closed".into()),
+            attempt: Some(3),
+            output: Some("FAIL: test_foo".into()),
+            parent: Some("10".into()),
+            children: Some("10.1,10.2".into()),
+            branch: Some("main".into()),
+        };
+
+        let result = expand_template(
+            "echo {id} {title} {status} {attempt} {output} {parent} {children} {branch}",
+            &vars,
+        );
+        assert_eq!(
+            result,
+            "echo 42 Fix the bug closed 3 FAIL: test_foo 10 10.1,10.2 main"
+        );
+    }
+
+    #[test]
+    fn test_expand_template_missing_vars_left_as_is() {
+        let vars = HookVars {
+            id: Some("1".into()),
+            ..Default::default()
+        };
+
+        let result = expand_template("echo {id} {title} {unknown}", &vars);
+        assert_eq!(result, "echo 1 {title} {unknown}");
+    }
+
+    #[test]
+    fn test_expand_template_output_truncated_to_1000_chars() {
+        let long_output = "x".repeat(2000);
+        let vars = HookVars {
+            output: Some(long_output),
+            ..Default::default()
+        };
+
+        let result = expand_template("echo {output}", &vars);
+        // "echo " = 5 chars + 1000 chars of x
+        assert_eq!(result.len(), 5 + 1000);
+    }
+
+    #[test]
+    fn test_expand_template_empty_template() {
+        let vars = HookVars::default();
+        let result = expand_template("", &vars);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_expand_template_no_placeholders() {
+        let vars = HookVars {
+            id: Some("1".into()),
+            ..Default::default()
+        };
+        let result = expand_template("echo hello world", &vars);
+        assert_eq!(result, "echo hello world");
+    }
+
+    #[test]
+    fn test_expand_template_multiple_same_var() {
+        let vars = HookVars {
+            id: Some("5".into()),
+            ..Default::default()
+        };
+        let result = expand_template("{id} and {id} again", &vars);
+        assert_eq!(result, "5 and 5 again");
+    }
+
+    // =====================================================================
+    // Config Hook Execution Tests
+    // =====================================================================
+
+    #[test]
+    fn test_execute_config_hook_writes_to_file() {
+        let temp_dir = create_test_dir();
+        let project_dir = temp_dir.path();
+        let output_file = project_dir.join("hook_output.txt");
+
+        let vars = HookVars {
+            id: Some("99".into()),
+            title: Some("Test bean".into()),
+            ..Default::default()
+        };
+
+        // Build the template with the output file path baked in
+        let template = format!("echo '{{id}}' > {}", output_file.display());
+        execute_config_hook("on_close", &template, &vars, project_dir);
+
+        // Wait briefly for async subprocess
+        std::thread::sleep(Duration::from_millis(500));
+
+        let content = fs::read_to_string(&output_file).unwrap();
+        assert_eq!(content.trim(), "99");
+    }
+
+    #[test]
+    fn test_execute_config_hook_failure_does_not_panic() {
+        let temp_dir = create_test_dir();
+        let project_dir = temp_dir.path();
+
+        // Running a command that doesn't exist should not panic
+        execute_config_hook(
+            "on_close",
+            "/nonexistent/command/that/does/not/exist",
+            &HookVars::default(),
+            project_dir,
+        );
+
+        // If we get here, the hook failure was handled gracefully
+    }
+
+    #[test]
+    fn test_execute_config_hook_with_template_expansion() {
+        let temp_dir = create_test_dir();
+        let project_dir = temp_dir.path();
+        let output_file = project_dir.join("expanded.txt");
+
+        let vars = HookVars {
+            id: Some("7".into()),
+            title: Some("My Task".into()),
+            status: Some("closed".into()),
+            branch: Some("feature-x".into()),
+            ..Default::default()
+        };
+
+        let template = format!(
+            "echo '{{id}}|{{title}}|{{status}}|{{branch}}' > {}",
+            output_file.display()
+        );
+        execute_config_hook("on_close", &template, &vars, project_dir);
+
+        std::thread::sleep(Duration::from_millis(500));
+
+        let content = fs::read_to_string(&output_file).unwrap();
+        assert_eq!(content.trim(), "7|My Task|closed|feature-x");
     }
 }

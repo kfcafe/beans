@@ -52,6 +52,7 @@ pub fn cmd_fact(
             pass_ok,
             claim: false,
             by: None,
+            verify_timeout: None,
         },
     )?;
 
@@ -89,7 +90,11 @@ pub fn cmd_fact(
 /// Re-runs verify commands for all beans with bean_type=fact.
 /// Reports which facts are stale (past their stale_after date)
 /// and which have failing verify commands.
+///
+/// Suspect propagation: facts that require artifacts from failing/stale facts
+/// are marked as suspect (up to depth 3).
 pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
+    use std::collections::{HashMap, HashSet};
     use std::process::Command as ShellCommand;
 
     let project_root = beans_dir
@@ -105,6 +110,12 @@ pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
     let mut failing_count = 0;
     let mut verified_count = 0;
     let mut total_facts = 0;
+    let mut suspect_count = 0;
+
+    // Collect all facts and their states for suspect propagation
+    let mut invalid_artifacts: HashSet<String> = HashSet::new();
+    let mut fact_requires: HashMap<String, Vec<String>> = HashMap::new();
+    let mut fact_titles: HashMap<String, String> = HashMap::new();
 
     // Check active beans
     for entry in index.beans.iter().chain(archived.iter()) {
@@ -129,6 +140,10 @@ pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
         }
 
         total_facts += 1;
+        fact_titles.insert(bean.id.clone(), bean.title.clone());
+        if !bean.requires.is_empty() {
+            fact_requires.insert(bean.id.clone(), bean.requires.clone());
+        }
 
         // Check staleness
         let is_stale = bean.stale_after.map(|sa| now > sa).unwrap_or(false);
@@ -136,6 +151,10 @@ pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
         if is_stale {
             stale_count += 1;
             eprintln!("⚠ STALE: [{}] \"{}\"", bean.id, bean.title);
+            // Stale facts invalidate their produced artifacts
+            for prod in &bean.produces {
+                invalid_artifacts.insert(prod.clone());
+            }
         }
 
         // Re-run verify command
@@ -158,6 +177,10 @@ pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
                 }
                 Ok(_) => {
                     failing_count += 1;
+                    // Failing facts invalidate their produced artifacts
+                    for prod in &bean.produces {
+                        invalid_artifacts.insert(prod.clone());
+                    }
                     eprintln!(
                         "  ✗ FAILING: [{}] \"{}\" — verify command returned non-zero",
                         bean.id, bean.title
@@ -165,16 +188,71 @@ pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
                 }
                 Err(e) => {
                     failing_count += 1;
+                    for prod in &bean.produces {
+                        invalid_artifacts.insert(prod.clone());
+                    }
                     eprintln!("  ✗ ERROR: [{}] \"{}\" — {}", bean.id, bean.title, e);
                 }
             }
         }
     }
 
+    // Suspect propagation: facts requiring invalid artifacts are suspect (depth limit 3)
+    if !invalid_artifacts.is_empty() {
+        let mut suspect_ids: HashSet<String> = HashSet::new();
+        let mut current_invalid = invalid_artifacts.clone();
+
+        for _depth in 0..3 {
+            let mut newly_invalid: HashSet<String> = HashSet::new();
+
+            for (fact_id, requires) in &fact_requires {
+                if suspect_ids.contains(fact_id) {
+                    continue;
+                }
+                for req in requires {
+                    if current_invalid.contains(req) {
+                        suspect_ids.insert(fact_id.clone());
+                        // This suspect fact's produced artifacts also become invalid
+                        // (for the next depth iteration)
+                        if let Some(entry) = index.beans.iter().chain(archived.iter()).find(|e| e.id == *fact_id) {
+                            let bean_path = if entry.status == crate::bean::Status::Closed {
+                                crate::discovery::find_archived_bean(beans_dir, &entry.id).ok()
+                            } else {
+                                find_bean_file(beans_dir, &entry.id).ok()
+                            };
+                            if let Some(bp) = bean_path {
+                                if let Ok(b) = Bean::from_file(&bp) {
+                                    for prod in &b.produces {
+                                        newly_invalid.insert(prod.clone());
+                                    }
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if newly_invalid.is_empty() {
+                break;
+            }
+            current_invalid = newly_invalid;
+        }
+
+        for suspect_id in &suspect_ids {
+            suspect_count += 1;
+            let title = fact_titles.get(suspect_id).map(|s| s.as_str()).unwrap_or("?");
+            eprintln!(
+                "  ⚠ SUSPECT: [{}] \"{}\" — requires artifact from invalid fact",
+                suspect_id, title
+            );
+        }
+    }
+
     println!();
     println!(
-        "Facts: {} total, {} verified, {} stale, {} failing",
-        total_facts, verified_count, stale_count, failing_count
+        "Facts: {} total, {} verified, {} stale, {} failing, {} suspect",
+        total_facts, verified_count, stale_count, failing_count, suspect_count
     );
 
     if failing_count > 0 {
@@ -209,6 +287,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+        on_close: None,
+        on_fail: None,
+        post_plan: None,
+        verify_timeout: None,
+        review: None,
         };
         config.save(&beans_dir).unwrap();
 

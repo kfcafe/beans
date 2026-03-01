@@ -1,6 +1,6 @@
 # Architecture
 
-> Last updated: 2026-02-23
+> Last updated: 2026-02-27
 > Manual edits welcome — recon preserves them and flags drift.
 
 ## Overview
@@ -13,7 +13,7 @@ One-sentence: **Markdown task files with dependency graphs and verification gate
 
 - **Language:** Rust (edition 2021)
 - **CLI framework:** clap 4 (derive macros)
-- **Serialization:** serde + serde_json + serde_yaml (⚠️ serde_yaml 0.9 is deprecated)
+- **Serialization:** serde + serde_json + serde_yml (serde_yaml 0.9 was deprecated; this repo migrated to serde_yml)
 - **Error handling:** anyhow (Result + bail! + .context() throughout)
 - **Terminal UI:** termimad (markdown rendering), dialoguer (interactive prompts)
 - **Hashing:** sha2 (for content checksums)
@@ -58,8 +58,12 @@ src/
 ├── commands/
 │   ├── mod.rs           — Command module declarations
 │   ├── create.rs        — Bean creation with slug generation
-│   ├── close.rs         — Verification + close logic (largest command, 2737L)
-│   ├── run.rs           — Agent orchestration: waves, dispatch, monitoring
+│   ├── close.rs         — Verification + close logic (largest command, 3330L)
+│   ├── run/
+│   │   ├── mod.rs       — Agent orchestration entry point (cmd_run, spawn modes)
+│   │   ├── plan.rs      — Dispatch planning (SizedBean, waves, priority)
+│   │   ├── ready_queue.rs — Ready-queue executor (direct mode, dep-aware dispatch)
+│   │   └── wave.rs      — Wave-based executor (template mode, legacy)
 │   ├── plan.rs          — Bean decomposition planning
 │   ├── show.rs          — Bean display with markdown rendering
 │   ├── edit.rs          — Interactive bean editing ($EDITOR)
@@ -98,6 +102,8 @@ src/
 │   ├── protocol.rs      — Request/response types
 │   ├── tools.rs         — Tool definitions (create, close, list, etc.)
 │   └── resources.rs     — Resource definitions (bean content)
+├── api/
+│   └── mod.rs           — Library API (programmatic access, re-exports core types)
 ├── spawner.rs           — Agent process lifecycle (spawn, track, log, cleanup)
 ├── stream.rs            — JSON streaming events for bn run --json-stream
 ├── pi_output.rs         — Parse pi agent output (events, tokens, costs)
@@ -114,7 +120,9 @@ src/
 tests/
 ├── cli_tests.rs         — Integration tests (5 test functions)
 ├── test_ctx_assembler.rs — Context assembler unit tests (22 tests)
-└── adopt_test.rs        — Adopt command tests (10 tests)
+├── adopt_test.rs        — Adopt command tests (10 tests)
+├── api_test.rs          — Library API tests
+└── mcp_test.rs          — MCP protocol tests
 
 docs/
 ├── SKILL.md             — Agent skill definition for beans
@@ -202,7 +210,7 @@ No GitHub Actions, Makefile, or Justfile. Tests run locally only.
 - **File naming:** Bean files use `{id}-{slug}.md` format (legacy: `{id}.yaml`)
 - **ID validation:** All bean IDs validated via `util::validate_bean_id()` to prevent path traversal
 - **Sorting:** Natural sort (`util::natural_cmp`) for bean IDs (1, 2, 10 not 1, 10, 2)
-- **Testing:** Heavy inline `#[cfg(test)]` modules — 851 tests, mostly unit tests inside source files
+- **Testing:** Heavy inline `#[cfg(test)]` modules — 891+ tests, mostly unit tests inside source files
 - **No async:** Entire codebase is synchronous (no tokio/async-std)
 - **Module exports:** `lib.rs` re-exports all modules as `pub mod`, commands behind `commands::mod.rs`
 
@@ -212,11 +220,12 @@ No GitHub Actions, Makefile, or Justfile. Tests run locally only.
 
 | Score | Churn | Size | File | Notes |
 |-------|-------|------|------|-------|
-| 60,214 | 22× | 2,737L | `commands/close.rs` | Largest command — verification + fail-first + hooks |
-| 56,753 | 29× | 1,957L | `commands/create.rs` | Most-changed command |
-| 32,460 | 20× | 1,623L | `bean.rs` | Core type — changes ripple everywhere |
-| 27,520 | 40× | 688L | `main.rs` | High churn from command dispatch growth |
-| 26,336 | 32× | 823L | `cli.rs` | Grows with every new subcommand |
+| 60,214 | 22× | 3,330L | `commands/close.rs` | Largest command — verification + fail-first + hooks |
+| 56,753 | 29× | 1,961L | `commands/create.rs` | Most-changed command |
+| 32,460 | 20× | 1,631L | `bean.rs` | Core type — changes ripple everywhere |
+| — | — | 2,327L | `commands/run/` | Agent orchestration (split into 4 files) |
+| 27,520 | 40× | 709L | `main.rs` | High churn from command dispatch growth |
+| 26,336 | 32× | 1,052L | `cli.rs` | Grows with every new subcommand |
 
 ### Temporal Coupling (files that change together)
 
@@ -230,21 +239,25 @@ This is expected — adding a command requires cli.rs (args) + mod.rs (module) +
 
 ### Test Coverage
 
-- **851 tests** across source files and 3 test files
+- **891+ tests** across source files and 5 test files
 - Heavy inline testing (`#[cfg(test)]` modules in most source files)
-- `close.rs` has the most tests (75) — appropriate given its complexity
+- `close.rs` has the most tests (89) — appropriate given its complexity
 - `ctx_assembler.rs` (49 inline + 22 in test file) and `bean.rs` (53) well tested
-- `util.rs` has 51 tests — good coverage of shared utilities
+- `util.rs` has 54 tests — good coverage of shared utilities
+- MCP tool handlers covered by `tests/mcp_test.rs` (38 tests)
+- **Zero-test files:** `status.rs`, `verify.rs`, `interactive.rs`, `locks.rs` (command-level)
 
 ### Notable Gaps
 - **No CI** — tests only run locally
-- **serde_yaml 0.9 is deprecated** — should migrate to a maintained YAML library
+- **serde_yml is pre-1.0** — currently pinned to 0.0.12. Monitor for security advisories and consider migrating to a stable, maintained YAML crate when available.
 - **No cargo-audit** — security vulnerabilities not checked
-- **commands/run.rs** (1,663L) is large and growing — orchestration logic may warrant extraction
+- **API layer is incomplete** — `api/mod.rs` has types and basic queries but mutations/orchestration are TODO stubs
+- **MCP tools duplicate CLI logic** — close, claim, auto-close-parent are reimplemented in `mcp/tools.rs` rather than sharing with `commands/close.rs`, causing behavioral divergence
 
 ### In-Progress Work (from .beans/)
-- Bean 11: Verify-on-claim (run verify before granting claim)
-- Bean 12: Git worktree sandboxing for parallel agents
-- Bean 75: Project rules (RULES.md convention)
-- Bean 76: MCP server
-- Beans 77-80: Various features (hooks, worktree isolation, gitignore, identity)
+- Bean 78: Worktree isolation for parallel agents
+- Bean 79: Gitignore index.yaml — treat as local cache
+- Bean 80: Identity model (bn config set user)
+- Bean 84: Codebase improvements (parent, needs decomposition)
+- Beans 89-92: Vibecheck improvement batches (duplicated across 4 runs)
+- Beans 94-96: Split large files (close.rs, bean.rs, create.rs) into module directories

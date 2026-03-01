@@ -637,6 +637,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+        verify_timeout: None,
+        review: None,
         };
 
         let result = spawner.spawn("1", "Test", AgentAction::Implement, &config);
@@ -661,6 +666,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+        verify_timeout: None,
+        review: None,
         };
 
         let result = spawner.spawn("1", "Test", AgentAction::Plan, &config);

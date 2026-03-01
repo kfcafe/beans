@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -41,32 +42,72 @@ pub fn agents_file_path() -> Result<std::path::PathBuf> {
 }
 
 /// Load agents from the persistence file. Returns empty map if file doesn't exist.
-pub fn load_agents() -> Result<std::collections::HashMap<String, AgentEntry>> {
+pub fn load_agents() -> Result<HashMap<String, AgentEntry>> {
     let path = agents_file_path()?;
     if !path.exists() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(HashMap::new());
     }
     let contents = std::fs::read_to_string(&path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
     if contents.trim().is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(HashMap::new());
     }
-    let agents: std::collections::HashMap<String, AgentEntry> =
+    let agents: HashMap<String, AgentEntry> =
         serde_json::from_str(&contents).with_context(|| "Failed to parse agents.json")?;
     Ok(agents)
 }
 
-/// Save agents back to the persistence file.
-pub fn save_agents(agents: &std::collections::HashMap<String, AgentEntry>) -> Result<()> {
+/// Save agents atomically by writing to a temp file then renaming.
+///
+/// Prevents corruption if the process is killed mid-write (e.g., an agent
+/// crashing during `bn close`). The rename is atomic on the same filesystem.
+pub fn save_agents(agents: &HashMap<String, AgentEntry>) -> Result<()> {
     let path = agents_file_path()?;
     let json = serde_json::to_string_pretty(agents)?;
-    std::fs::write(&path, json).with_context(|| format!("Failed to write {}", path.display()))?;
+
+    let tmp_path = path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, &json)
+        .with_context(|| format!("Failed to write temp agents file {}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, &path).with_context(|| {
+        format!(
+            "Failed to rename {} to {}",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
+
     Ok(())
 }
 
 /// Check if a process with the given PID is still alive.
+///
+/// Uses `kill(pid, 0)` which checks existence without signaling.
+/// Returns `true` if the process exists, even if owned by another user (EPERM).
+/// Returns `false` if the PID overflows `i32` (not a valid Unix PID).
 fn process_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    let Ok(pid_i32) = i32::try_from(pid) else {
+        return false;
+    };
+
+    // SAFETY: kill(pid, 0) sends no signal — it only checks process existence.
+    // Returns 0 if the process exists and we can signal it.
+    // Returns -1 with EPERM if the process exists but is owned by another user.
+    // Returns -1 with ESRCH if the process does not exist.
+    let ret = unsafe { libc::kill(pid_i32, 0) };
+    if ret == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Truncate a string to fit within `max_display_chars` characters, appending "…"
+/// if truncated. Works correctly with multi-byte UTF-8.
+fn truncate_title(title: &str, max_display_chars: usize) -> String {
+    if title.chars().count() <= max_display_chars {
+        return title.to_string();
+    }
+    let truncated: String = title.chars().take(max_display_chars - 1).collect();
+    format!("{truncated}…")
 }
 
 /// Format a duration in seconds as a human-readable string (e.g. "1m 32s").
@@ -92,7 +133,7 @@ pub fn cmd_agents(_beans_dir: &Path, json: bool) -> Result<()> {
 
     // Clean up stale entries: if PID is dead and no finished_at, mark as completed
     let mut changed = false;
-    for (_id, entry) in agents.iter_mut() {
+    for entry in agents.values_mut() {
         if entry.finished_at.is_none() && !process_alive(entry.pid) {
             entry.finished_at = Some(now);
             entry.exit_code = Some(-1); // unknown — process vanished
@@ -104,7 +145,7 @@ pub fn cmd_agents(_beans_dir: &Path, json: bool) -> Result<()> {
     let one_hour_ago = now - 3600;
     let before_len = agents.len();
     agents.retain(|_id, entry| {
-        entry.finished_at.map(|f| f > one_hour_ago).unwrap_or(true) // keep running agents
+        entry.finished_at.map(|f| f > one_hour_ago).unwrap_or(true)
     });
     if agents.len() != before_len {
         changed = true;
@@ -123,10 +164,49 @@ pub fn cmd_agents(_beans_dir: &Path, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Separate into running and completed
+    if json {
+        return print_agents_json(&agents, now);
+    }
+
+    print_agents_table(&agents, now);
+    Ok(())
+}
+
+fn print_agents_json(agents: &HashMap<String, AgentEntry>, now: i64) -> Result<()> {
+    let entries: Vec<AgentJsonEntry> = agents
+        .iter()
+        .map(|(id, entry)| {
+            let elapsed = if let Some(finished) = entry.finished_at {
+                (finished - entry.started_at).unsigned_abs()
+            } else {
+                (now - entry.started_at).unsigned_abs()
+            };
+            let status = match entry.finished_at {
+                Some(_) => match entry.exit_code {
+                    Some(0) | None => "completed".to_string(),
+                    Some(code) => format!("failed({})", code),
+                },
+                None => "running".to_string(),
+            };
+            AgentJsonEntry {
+                bean_id: id.clone(),
+                title: entry.title.clone(),
+                action: entry.action.clone(),
+                pid: entry.pid,
+                elapsed_secs: elapsed,
+                status,
+            }
+        })
+        .collect();
+    let json_str = serde_json::to_string_pretty(&entries)?;
+    println!("{}", json_str);
+    Ok(())
+}
+
+fn print_agents_table(agents: &HashMap<String, AgentEntry>, now: i64) {
     let mut running: Vec<(&String, &AgentEntry)> = Vec::new();
     let mut completed: Vec<(&String, &AgentEntry)> = Vec::new();
-    for (id, entry) in &agents {
+    for (id, entry) in agents {
         if entry.finished_at.is_some() {
             completed.push((id, entry));
         } else {
@@ -134,44 +214,11 @@ pub fn cmd_agents(_beans_dir: &Path, json: bool) -> Result<()> {
         }
     }
 
-    // Sort by bean ID
     running.sort_by(|a, b| crate::util::natural_cmp(a.0, b.0));
     completed.sort_by(|a, b| crate::util::natural_cmp(a.0, b.0));
 
-    if json {
-        let entries: Vec<AgentJsonEntry> = agents
-            .iter()
-            .map(|(id, entry)| {
-                let elapsed = if let Some(finished) = entry.finished_at {
-                    (finished - entry.started_at).unsigned_abs()
-                } else {
-                    (now - entry.started_at).unsigned_abs()
-                };
-                let status = if entry.finished_at.is_some() {
-                    match entry.exit_code {
-                        Some(0) => "completed".to_string(),
-                        Some(code) => format!("failed({})", code),
-                        None => "completed".to_string(),
-                    }
-                } else {
-                    "running".to_string()
-                };
-                AgentJsonEntry {
-                    bean_id: id.clone(),
-                    title: entry.title.clone(),
-                    action: entry.action.clone(),
-                    pid: entry.pid,
-                    elapsed_secs: elapsed,
-                    status,
-                }
-            })
-            .collect();
-        let json_str = serde_json::to_string_pretty(&entries)?;
-        println!("{}", json_str);
-        return Ok(());
-    }
+    const TITLE_WIDTH: usize = 24;
 
-    // Table output
     if !running.is_empty() {
         println!(
             "{:<6} {:<24} {:<12} {:<8} ELAPSED",
@@ -179,11 +226,7 @@ pub fn cmd_agents(_beans_dir: &Path, json: bool) -> Result<()> {
         );
         for (id, entry) in &running {
             let elapsed = (now - entry.started_at).unsigned_abs();
-            let title = if entry.title.len() > 24 {
-                format!("{}…", &entry.title[..23])
-            } else {
-                entry.title.clone()
-            };
+            let title = truncate_title(&entry.title, TITLE_WIDTH);
             println!(
                 "{:<6} {:<24} {:<12} {:<8} {}",
                 id,
@@ -210,11 +253,7 @@ pub fn cmd_agents(_beans_dir: &Path, json: bool) -> Result<()> {
                 Some(code) => format!("✗ exit {}", code),
                 None => "?".to_string(),
             };
-            let title = if entry.title.len() > 24 {
-                format!("{}…", &entry.title[..23])
-            } else {
-                entry.title.clone()
-            };
+            let title = truncate_title(&entry.title, TITLE_WIDTH);
             println!(
                 "  {} {} ({}, {})",
                 id,
@@ -224,14 +263,11 @@ pub fn cmd_agents(_beans_dir: &Path, json: bool) -> Result<()> {
             );
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn format_elapsed_seconds() {
@@ -252,7 +288,6 @@ mod tests {
         let path = dir.path().join("agents.json");
         std::fs::write(&path, "").unwrap();
 
-        // Test parse of empty string returns empty map
         let contents = std::fs::read_to_string(&path).unwrap();
         assert!(contents.trim().is_empty());
     }
@@ -289,13 +324,9 @@ mod tests {
         let beans_dir = dir.path().join(".beans");
         std::fs::create_dir(&beans_dir).unwrap();
 
-        // With no agents.json file at all, cmd_agents should work fine
-        // We test via the load path
-        // Can't easily override agents_file_path in test, so just verify
-        // the load_agents function handles missing file
-        let agents = load_agents();
-        // This will try to read from the real state dir, which may or may not exist.
+        // load_agents reads from the real state dir, which may or may not exist.
         // The function handles both cases gracefully.
+        let agents = load_agents();
         assert!(agents.is_ok());
     }
 
@@ -307,5 +338,40 @@ mod tests {
     #[test]
     fn process_alive_returns_false_for_nonexistent() {
         assert!(!process_alive(99_999_999));
+    }
+
+    #[test]
+    fn process_alive_returns_false_for_overflowed_pid() {
+        // PID > i32::MAX should return false, not panic
+        assert!(!process_alive(u32::MAX));
+        assert!(!process_alive(i32::MAX as u32 + 1));
+    }
+
+    #[test]
+    fn truncate_title_short_string() {
+        assert_eq!(truncate_title("hello", 24), "hello");
+    }
+
+    #[test]
+    fn truncate_title_exact_length() {
+        let title = "a".repeat(24);
+        assert_eq!(truncate_title(&title, 24), title);
+    }
+
+    #[test]
+    fn truncate_title_long_string() {
+        let title = "a".repeat(30);
+        let result = truncate_title(&title, 24);
+        assert_eq!(result.chars().count(), 24);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn truncate_title_multibyte_utf8() {
+        // 13 emoji = 13 chars but 52 bytes — must not panic on byte boundary
+        let title = "🎉".repeat(13);
+        let result = truncate_title(&title, 10);
+        assert_eq!(result.chars().count(), 10);
+        assert!(result.ends_with('…'));
     }
 }

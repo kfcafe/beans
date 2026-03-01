@@ -305,14 +305,7 @@ fn format_node(entry: &IndexEntry) -> String {
         Status::Open => "[ ]",
     };
 
-    // Truncate title if too long
-    let title = if entry.title.len() > 40 {
-        format!("{}…", &entry.title[..39])
-    } else {
-        entry.title.clone()
-    };
-
-    format!("{} {}  {}", status_icon, entry.id, title)
+    format!("{} {}  {}", status_icon, entry.id, entry.title)
 }
 
 fn output_dot_graph(index: &Index) -> Result<()> {
@@ -509,16 +502,19 @@ mod tests {
     }
 
     #[test]
-    fn ascii_long_title_truncation() {
+    fn ascii_long_title_not_truncated() {
         let dir = TempDir::new().unwrap();
         let beans_dir = dir.path().join(".beans");
         fs::create_dir(&beans_dir).unwrap();
 
-        let bean = Bean::new("1", "This is a very long title that should be truncated");
+        let long_title = "This is a very long title that should not be truncated";
+        let bean = Bean::new("1", long_title);
         bean.to_file(beans_dir.join("1.yaml")).unwrap();
 
-        let result = cmd_graph(&beans_dir, "ascii");
-        assert!(result.is_ok());
+        // Verify the full title appears in format_node output
+        let index = Index::load_or_rebuild(&beans_dir).unwrap();
+        let node = format_node(&index.beans[0]);
+        assert!(node.contains(long_title), "Full title should appear in graph node");
     }
 
     #[test]
