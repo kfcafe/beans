@@ -1,5 +1,10 @@
 # beans
 
+[![CI](https://github.com/kfcafe/beans/actions/workflows/ci.yml/badge.svg)](https://github.com/kfcafe/beans/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/beans-cli)](https://crates.io/crates/beans-cli)
+[![License](https://img.shields.io/crates/l/beans-cli)](LICENSE)
+[![Downloads](https://img.shields.io/crates/d/beans-cli)](https://crates.io/crates/beans-cli)
+
 Task tracker for AI agents.
 
 Markdown files that track dependencies and require verification to close.
