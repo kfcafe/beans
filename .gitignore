@@ -1,10 +1,9 @@
 /target
 
-# Regenerable cache — rebuilt automatically by bn sync
-.beans/index.yaml
-
-# File lock used by bn for concurrent index access
-.beans/index.lock
+# Beans — track config and rules only, not task files
+.beans/*
+!.beans/config.yaml
+!.beans/RULES.md
 
 # macOS
 .DS_Store
@@ -21,5 +20,11 @@
 *.bak
 *~
 *.orig
+
+# Dev tools
 .vibecheck/
-.beans/race/
+.claude/
+tools/
+DESIGN-*.md
+VIBES.md
+VIBECHECK.md
