@@ -240,6 +240,7 @@ fn run_wave_template(
 }
 
 /// Direct mode: spawn pi directly with JSON output and monitoring.
+#[allow(clippy::too_many_arguments)]
 fn run_wave_direct(
     beans_dir: &Path,
     beans: &[SizedBean],
