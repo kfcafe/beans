@@ -109,12 +109,8 @@ pub fn read_file(path: &Path) -> io::Result<String> {
         ));
     }
 
-    String::from_utf8(bytes).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "File is not valid UTF-8",
-        )
-    })
+    String::from_utf8(bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "File is not valid UTF-8"))
 }
 
 /// Detects the programming language from a file extension.
@@ -176,7 +172,11 @@ pub fn assemble_context(paths: Vec<String>, base_dir: &Path) -> io::Result<Strin
     let canonical_base = base_dir.canonicalize().map_err(|e| {
         io::Error::new(
             e.kind(),
-            format!("Cannot canonicalize base directory {}: {}", base_dir.display(), e),
+            format!(
+                "Cannot canonicalize base directory {}: {}",
+                base_dir.display(),
+                e
+            ),
         )
     })?;
 
@@ -670,8 +670,7 @@ mod tests {
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&secret, project.join("secret.json")).unwrap();
-            let result =
-                assemble_context(vec!["secret.json".to_string()], &project).unwrap();
+            let result = assemble_context(vec!["secret.json".to_string()], &project).unwrap();
             assert!(
                 !result.contains("leaked"),
                 "Symlink escape should be blocked"

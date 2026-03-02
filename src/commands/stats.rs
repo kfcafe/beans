@@ -122,23 +122,26 @@ fn aggregate_cost(beans: &[Bean]) -> Option<CostStats> {
         // First-pass rate: closed beans where first RunRecord is a Pass
         if bean.status == Status::Closed {
             closed_with_history += 1;
-            if bean.history.first().map(|r| r.result == RunResult::Pass).unwrap_or(false) {
+            if bean
+                .history
+                .first()
+                .map(|r| r.result == RunResult::Pass)
+                .unwrap_or(false)
+            {
                 first_pass_count += 1;
             }
         }
 
         // Track most expensive (by total tokens across all attempts)
-        if bean_tokens > 0
-            && most_expensive.is_none_or(|(_, t)| bean_tokens > t) {
-                most_expensive = Some((bean, bean_tokens));
-            }
+        if bean_tokens > 0 && most_expensive.is_none_or(|(_, t)| bean_tokens > t) {
+            most_expensive = Some((bean, bean_tokens));
+        }
 
         // Track most retried (by number of history entries)
         let attempt_count = bean.history.len();
-        if attempt_count > 1
-            && most_retried.is_none_or(|(_, c)| attempt_count > c) {
-                most_retried = Some((bean, attempt_count));
-            }
+        if attempt_count > 1 && most_retried.is_none_or(|(_, c)| attempt_count > c) {
+            most_retried = Some((bean, attempt_count));
+        }
     }
 
     // Don't show the section at all when nothing has been tracked
@@ -414,7 +417,10 @@ mod tests {
     fn aggregate_cost_no_history() {
         let beans = vec![Bean::new("1", "No history")];
         let result = aggregate_cost(&beans);
-        assert!(result.is_none(), "Should return None when no beans have history");
+        assert!(
+            result.is_none(),
+            "Should return None when no beans have history"
+        );
     }
 
     #[test]
@@ -424,20 +430,18 @@ mod tests {
 
         let mut bean = Bean::new("1", "With history");
         bean.status = Status::Closed;
-        bean.history = vec![
-            RunRecord {
-                attempt: 1,
-                started_at: Utc::now(),
-                finished_at: None,
-                duration_secs: None,
-                agent: None,
-                result: RunResult::Pass,
-                exit_code: Some(0),
-                tokens: Some(1000),
-                cost: Some(0.05),
-                output_snippet: None,
-            },
-        ];
+        bean.history = vec![RunRecord {
+            attempt: 1,
+            started_at: Utc::now(),
+            finished_at: None,
+            duration_secs: None,
+            agent: None,
+            result: RunResult::Pass,
+            exit_code: Some(0),
+            tokens: Some(1000),
+            cost: Some(0.05),
+            output_snippet: None,
+        }];
 
         let stats = aggregate_cost(&[bean]).unwrap();
         assert_eq!(stats.total_tokens, 1000);

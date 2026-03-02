@@ -298,7 +298,11 @@ pub fn expand_template(template: &str, vars: &HookVars) -> String {
     }
     if let Some(ref v) = vars.output {
         // Truncate output to 1000 chars
-        let truncated = if v.len() > 1000 { &v[..1000] } else { v.as_str() };
+        let truncated = if v.len() > 1000 {
+            &v[..1000]
+        } else {
+            v.as_str()
+        };
         result = result.replace("{output}", truncated);
     }
     if let Some(ref v) = vars.parent {
@@ -343,12 +347,7 @@ pub fn current_git_branch() -> Option<String> {
 /// * `template` - The command template with `{var}` placeholders
 /// * `vars` - Template variables to expand
 /// * `project_dir` - Working directory for the subprocess
-pub fn execute_config_hook(
-    hook_name: &str,
-    template: &str,
-    vars: &HookVars,
-    project_dir: &Path,
-) {
+pub fn execute_config_hook(hook_name: &str, template: &str, vars: &HookVars, project_dir: &Path) {
     let cmd = expand_template(template, vars);
 
     match Command::new("sh")

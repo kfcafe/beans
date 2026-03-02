@@ -48,6 +48,7 @@ pub fn cmd_fact(
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok,
             claim: false,
@@ -214,7 +215,12 @@ pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
                         suspect_ids.insert(fact_id.clone());
                         // This suspect fact's produced artifacts also become invalid
                         // (for the next depth iteration)
-                        if let Some(entry) = index.beans.iter().chain(archived.iter()).find(|e| e.id == *fact_id) {
+                        if let Some(entry) = index
+                            .beans
+                            .iter()
+                            .chain(archived.iter())
+                            .find(|e| e.id == *fact_id)
+                        {
                             let bean_path = if entry.status == crate::bean::Status::Closed {
                                 crate::discovery::find_archived_bean(beans_dir, &entry.id).ok()
                             } else {
@@ -241,7 +247,10 @@ pub fn cmd_verify_facts(beans_dir: &Path) -> Result<()> {
 
         for suspect_id in &suspect_ids {
             suspect_count += 1;
-            let title = fact_titles.get(suspect_id).map(|s| s.as_str()).unwrap_or("?");
+            let title = fact_titles
+                .get(suspect_id)
+                .map(|s| s.as_str())
+                .unwrap_or("?");
             eprintln!(
                 "  ⚠ SUSPECT: [{}] \"{}\" — requires artifact from invalid fact",
                 suspect_id, title
@@ -287,11 +296,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 

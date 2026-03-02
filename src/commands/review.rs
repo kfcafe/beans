@@ -63,17 +63,13 @@ pub fn cmd_review(beans_dir: &Path, args: ReviewArgs) -> Result<()> {
 
     let bean_path = find_bean_file(beans_dir, &args.id)
         .with_context(|| format!("Bean not found: {}", args.id))?;
-    let bean = Bean::from_file(&bean_path)
-        .with_context(|| format!("Failed to load bean: {}", args.id))?;
+    let bean =
+        Bean::from_file(&bean_path).with_context(|| format!("Failed to load bean: {}", args.id))?;
 
     // Enforce max_reopens to prevent infinite review loops.
     // Count how many times review has previously reopened this bean by
     // counting "Review failed" markers injected into notes.
-    let max_reopens = config
-        .review
-        .as_ref()
-        .map(|r| r.max_reopens)
-        .unwrap_or(2);
+    let max_reopens = config.review.as_ref().map(|r| r.max_reopens).unwrap_or(2);
 
     let reopen_count = bean
         .notes
@@ -265,8 +261,8 @@ pub fn apply_verdict(
     bean_path: &PathBuf,
     verdict: ReviewVerdict,
 ) -> Result<()> {
-    let mut bean = Bean::from_file(bean_path)
-        .with_context(|| format!("Failed to reload bean: {}", id))?;
+    let mut bean =
+        Bean::from_file(bean_path).with_context(|| format!("Failed to reload bean: {}", id))?;
 
     match verdict {
         ReviewVerdict::Approve => {

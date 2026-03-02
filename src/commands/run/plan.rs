@@ -8,9 +8,9 @@ use crate::index::{Index, IndexEntry};
 use crate::stream::{self, StreamEvent};
 use crate::tokens;
 
-use super::BeanAction;
 use super::ready_queue::all_deps_closed;
 use super::wave::{compute_waves, Wave};
+use super::BeanAction;
 
 /// A bean with sizing and dispatch action.
 #[derive(Debug, Clone)]

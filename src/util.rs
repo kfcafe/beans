@@ -210,15 +210,13 @@ pub fn title_to_slug(title: &str) -> String {
 /// are on the same filesystem (guaranteed here since we use the same directory).
 /// The temp file is cleaned up on error.
 pub fn atomic_write(path: &Path, contents: &str) -> Result<()> {
-    let tmp_path = path.with_extension(format!(
-        "tmp.{}",
-        std::process::id()
-    ));
+    let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
 
     // Write to temp file; clean up on failure
     if let Err(e) = std::fs::write(&tmp_path, contents) {
         let _ = std::fs::remove_file(&tmp_path);
-        return Err(e).with_context(|| format!("Failed to write temp file: {}", tmp_path.display()));
+        return Err(e)
+            .with_context(|| format!("Failed to write temp file: {}", tmp_path.display()));
     }
 
     // Atomic rename; clean up temp on failure
@@ -649,9 +647,6 @@ mod tests {
             .filter_map(|e| e.ok())
             .collect();
         assert_eq!(entries.len(), 1, "only the target file should exist");
-        assert_eq!(
-            entries[0].file_name().to_str().unwrap(),
-            "test.yaml"
-        );
+        assert_eq!(entries[0].file_name().to_str().unwrap(), "test.yaml");
     }
 }

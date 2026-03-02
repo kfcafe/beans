@@ -328,6 +328,16 @@ pub fn cmd_init(path: Option<&Path>, args: InitArgs) -> Result<()> {
         .with_context(|| format!("Failed to create RULES.md at {}", rules_path.display()))?;
     }
 
+    // Create .beans/.gitignore if it doesn't exist — index.yaml is a regenerable cache
+    let gitignore_path = beans_dir.join(".gitignore");
+    if !gitignore_path.exists() {
+        fs::write(
+            &gitignore_path,
+            "# Regenerable cache — rebuilt automatically by bn sync\nindex.yaml\n\n# File lock\nindex.lock\n",
+        )
+        .with_context(|| format!("Failed to create .gitignore at {}", gitignore_path.display()))?;
+    }
+
     if already_exists && args.setup {
         eprintln!("Reconfigured beans in .beans/");
     } else if !already_exists {

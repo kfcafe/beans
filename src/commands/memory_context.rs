@@ -347,11 +347,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 

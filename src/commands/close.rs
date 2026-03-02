@@ -9,7 +9,9 @@ use chrono::Utc;
 use crate::bean::{Bean, OnCloseAction, OnFailAction, RunRecord, RunResult, Status};
 use crate::config::Config;
 use crate::discovery::{archive_path_for_bean, find_archived_bean, find_bean_file};
-use crate::hooks::{execute_config_hook, execute_hook, is_trusted, current_git_branch, HookEvent, HookVars};
+use crate::hooks::{
+    current_git_branch, execute_config_hook, execute_hook, is_trusted, HookEvent, HookVars,
+};
 use crate::index::Index;
 use crate::util::title_to_slug;
 use crate::worktree;
@@ -52,7 +54,11 @@ struct VerifyResult {
 /// Returns VerifyResult with success status, exit code, and combined stdout/stderr.
 /// If `timeout_secs` is Some(n), the process is killed after n seconds and
 /// the result has `timed_out = true`.
-fn run_verify(beans_dir: &Path, verify_cmd: &str, timeout_secs: Option<u64>) -> Result<VerifyResult> {
+fn run_verify(
+    beans_dir: &Path,
+    verify_cmd: &str,
+    timeout_secs: Option<u64>,
+) -> Result<VerifyResult> {
     // Run in the project root (parent of .beans/)
     let project_root = beans_dir
         .parent()
@@ -93,7 +99,10 @@ fn run_verify(beans_dir: &Path, verify_cmd: &str, timeout_secs: Option<u64>) -> 
     let start = Instant::now();
 
     let (timed_out, exit_status) = loop {
-        match child.try_wait().with_context(|| "Failed to poll verify process")? {
+        match child
+            .try_wait()
+            .with_context(|| "Failed to poll verify process")?
+        {
             Some(status) => break (false, Some(status)),
             None => {
                 if let Some(limit) = timeout {
@@ -389,9 +398,8 @@ pub fn cmd_close(
                 let started_at = Utc::now();
 
                 // Compute effective timeout: bean-level overrides config-level.
-                let timeout_secs = bean.effective_verify_timeout(
-                    config.as_ref().and_then(|c| c.verify_timeout),
-                );
+                let timeout_secs =
+                    bean.effective_verify_timeout(config.as_ref().and_then(|c| c.verify_timeout));
 
                 // Run the verify command
                 let verify_result = run_verify(beans_dir, verify_cmd, timeout_secs)?;
@@ -641,7 +649,18 @@ pub fn cmd_close(
         }
 
         // Handle worktree merge (after verify passes, before archiving)
-        let worktree_info = worktree::detect_worktree()?;
+        //
+        // detect_worktree() uses the process-global CWD. If CWD was deleted or
+        // points to an unrelated directory (e.g. during parallel test execution),
+        // we gracefully skip worktree operations. We also validate that the
+        // detected worktree actually contains this project's root — this prevents
+        // acting on a foreign repository when CWD is polluted.
+        let worktree_info = worktree::detect_worktree().unwrap_or(None);
+        let worktree_info = worktree_info.filter(|wt_info| {
+            let canonical_root = std::fs::canonicalize(project_root)
+                .unwrap_or_else(|_| project_root.to_path_buf());
+            canonical_root.starts_with(&wt_info.worktree_path)
+        });
         if let Some(ref wt_info) = worktree_info {
             // Commit any uncommitted changes
             worktree::commit_worktree_changes(&format!("Close bean {}: {}", id, bean.title))?;
@@ -779,9 +798,8 @@ pub fn cmd_close(
         if beans_dir.exists() {
             if let Some(parent_id) = &bean.parent {
                 // Check config for auto_close_parent setting
-                let auto_close_enabled = config.as_ref()
-                    .map(|c| c.auto_close_parent)
-                    .unwrap_or(true); // Default to true
+                let auto_close_enabled =
+                    config.as_ref().map(|c| c.auto_close_parent).unwrap_or(true); // Default to true
 
                 if auto_close_enabled && all_children_closed(beans_dir, parent_id)? {
                     auto_close_parent(beans_dir, parent_id)?;
@@ -815,11 +833,7 @@ pub fn cmd_close(
 ///
 /// The bean stays open and the claim is released so another agent can retry.
 /// Records the failure in attempt_log for episodic memory.
-pub fn cmd_close_failed(
-    beans_dir: &Path,
-    ids: Vec<String>,
-    reason: Option<String>,
-) -> Result<()> {
+pub fn cmd_close_failed(beans_dir: &Path, ids: Vec<String>, reason: Option<String>) -> Result<()> {
     if ids.is_empty() {
         return Err(anyhow!("At least one bean ID is required"));
     }
@@ -1674,8 +1688,8 @@ mod tests {
             on_close: None,
             on_fail: None,
             post_plan: None,
-        verify_timeout: None,
-        review: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -1791,8 +1805,8 @@ mod tests {
             on_close: None,
             on_fail: None,
             post_plan: None,
-        verify_timeout: None,
-        review: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -2825,8 +2839,8 @@ mod tests {
             on_close: None,
             on_fail: None,
             post_plan: None,
-        verify_timeout: None,
-        review: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -3206,7 +3220,9 @@ mod tests {
         use std::path::PathBuf;
         use std::sync::Mutex;
 
-        /// Serialize tests that change the process-global CWD.
+        /// Serialize worktree tests that change the process-global CWD.
+        /// These tests must not run concurrently with each other because they
+        /// all call set_current_dir, which is process-global.
         static CWD_LOCK: Mutex<()> = Mutex::new(());
 
         /// RAII guard that restores the process CWD on drop (even on panic).

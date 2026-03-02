@@ -2,13 +2,32 @@
 id: '79'
 title: Gitignore index.yaml — treat as local cache
 slug: gitignore-indexyaml-treat-as-local-cache
-status: open
+status: closed
 priority: 2
-created_at: 2026-02-23T12:51:53.142977Z
-updated_at: 2026-02-23T12:51:53.142977Z
+created_at: '2026-02-23T12:51:53.142977Z'
+updated_at: '2026-03-02T00:50:11.223869Z'
+closed_at: '2026-03-02T00:50:11.223869Z'
 verify: grep -q 'index.yaml' .beans/.gitignore 2>/dev/null || grep -q 'index.yaml' .gitignore
+fail_first: true
+checkpoint: '6012d23d80212314dee9be4624d3f5e44f5a1786'
+claimed_by: pi-agent
+claimed_at: '2026-03-02T00:46:15.144902Z'
+is_archived: true
 tokens: 6411
-tokens_updated: 2026-02-23T12:51:53.147230Z
+tokens_updated: '2026-02-23T12:51:53.147230Z'
+history:
+- attempt: 1
+  started_at: '2026-03-02T00:50:11.226773Z'
+  finished_at: '2026-03-02T00:50:11.281014Z'
+  duration_secs: 0.054
+  result: pass
+  exit_code: 0
+attempt_log:
+- num: 1
+  outcome: success
+  agent: pi-agent
+  started_at: '2026-03-02T00:46:15.144902Z'
+  finished_at: '2026-03-02T00:50:11.223869Z'
 ---
 
 ## Task

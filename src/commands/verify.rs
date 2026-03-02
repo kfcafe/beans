@@ -30,9 +30,8 @@ pub fn cmd_verify(beans_dir: &Path, id: &str) -> Result<bool> {
 
     // Determine effective timeout: bean overrides config.
     let config = Config::load(beans_dir).ok();
-    let timeout_secs = bean.effective_verify_timeout(
-        config.as_ref().and_then(|c| c.verify_timeout),
-    );
+    let timeout_secs =
+        bean.effective_verify_timeout(config.as_ref().and_then(|c| c.verify_timeout));
 
     // Run in the project root (parent of .beans/)
     let project_root = beans_dir
@@ -76,7 +75,10 @@ pub fn cmd_verify(beans_dir: &Path, id: &str) -> Result<bool> {
     let start = Instant::now();
 
     let (timed_out, exit_status) = loop {
-        match child.try_wait().with_context(|| "Failed to poll verify process")? {
+        match child
+            .try_wait()
+            .with_context(|| "Failed to poll verify process")?
+        {
             Some(status) => break (false, Some(status)),
             None => {
                 if let Some(limit) = timeout {
@@ -103,7 +105,11 @@ pub fn cmd_verify(beans_dir: &Path, id: &str) -> Result<bool> {
     }
 
     if timed_out {
-        println!("Verify timed out after {}s for bean {}", timeout_secs.unwrap_or(0), id);
+        println!(
+            "Verify timed out after {}s for bean {}",
+            timeout_secs.unwrap_or(0),
+            id
+        );
         return Ok(false);
     }
 

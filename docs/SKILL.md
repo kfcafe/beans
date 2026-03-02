@@ -1,377 +1,86 @@
 ---
 name: beans
 description: >
-  A task tracker with verify gates. Default action: `bn create "task" --verify "cmd"`.
-allowed-tools: Bash, Read, Edit, Write
+  Task tracker and agent orchestration. Create beans to delegate work — `bn run` dispatches agents
+  automatically. Default action: `bn create "task" --verify "cmd"` (don't claim — let orchestration handle it).
 ---
 
-# Beans Task Engine
+# Beans — Quick Reference
 
-Beans is a task tracker where every task has a verify gate — a shell command that must exit 0 to close.
+Beans is a task tracker where every task has a **verify gate** — a shell command that must exit 0 to close.
 
-The magic: a well-written bean is a complete agent prompt. The description has the context, the file paths tell you where to look, the acceptance criteria define done, and the verify command proves it. An agent can pick up any bean cold and execute it without searching the codebase.
+**For syntax and examples:** `bn --help` or `bn <command> --help`
 
+## When to Create
+
+- Bug found while working → `bn create "bug: ..." --verify "test"`
+- Multi-step feature → `bn create "feat: ..." --verify "test"`
+- Tests needed → `bn create "test: ..." --verify "test"`
+- Refactor/docs/chore → `bn create "refactor: ..." --verify "cmd" -p`
+
+Use `--paths` to specify which files a bean touches (used by `bn context`):
 ```bash
-bn show <id>       # The prompt: what to do, why, and how to verify
-bn context <id>    # The code: all files referenced in the description
+bn create "fix auth" --verify "cargo test auth" --paths "src/auth.rs,src/routes.rs"
 ```
 
-These two commands are all an agent needs to start working.
+Don't claim — `bn run` dispatches agents. Use `-p` when verify already passes.
 
-## Create a Bean First
+**Don't create** for questions, lookups, or trivial one-line fixes.
 
-When a user asks for non-trivial work, create a bean before you start:
+## Agent Context
 
-```bash
-bn create "What they asked for" --verify "test command"
-```
+`bn context <id>` is the single source of truth for agents. It outputs:
+1. Bean spec (title, verify, description, acceptance)
+2. Previous attempt notes (what was tried, what failed)
+3. Project rules (RULES.md)
+4. Dependency context (sibling beans that produce required artifacts)
+5. Referenced file contents (from `paths` field + description text)
 
-Then claim it and work:
+## Writing Good Descriptions
 
-```bash
-bn claim @latest
-```
+Bean descriptions are agent prompts. Quality determines agent success.
 
-Or use `bn quick` to create and claim in one step:
+**Include:**
+1. **Concrete steps** — numbered, actionable ("Add test for X in Y" not "test things")
+2. **File paths with intent** — `src/auth.rs (modify — add validation)`
+3. **Embedded context** — paste actual types/signatures the agent needs
+4. **Acceptance criteria** — what "done" looks like beyond the verify command
+5. **Anti-patterns** — what NOT to do (learned from previous failures)
 
-```bash
-bn quick "What they asked for" --verify "test command"
-```
-
-### When to Create a Bean
-
-| Situation | Command |
-|-----------|---------|
-| Fix a bug | `bn create "bug: ..." --verify "<test>"` |
-| Add a feature | `bn create "feat: ..." --verify "<test>"` |
-| Refactor code | `bn create "refactor: ..." --verify "<test>" -p` |
-| Add tests | `bn create "test: ..." --verify "<test>"` |
-| Update docs | `bn create "docs: ..." --verify "grep -q '...' <file>" -p` |
-| Multi-step task | Always |
-| Found issue while working | `bn create "bug: ..." --verify "<test>"` (don't claim — stay focused) |
-
-### When NOT to Create a Bean
-
-- Pure questions or explanations
-- Single-command lookups
-- Trivial one-line fixes
-
-**When in doubt, create one.** It takes 2 seconds. Untracked work costs everything.
-
-## Writing Good Beans
-
-A good bean is a good prompt. Include enough context that any agent can pick it up cold:
+**Example:**
 
 ```bash
-bn create "title" --verify "cmd" --description "## Context
-<Why this needs doing — 1-2 sentences>
+bn create "Add expired token test" \
+  --verify "cargo test auth::tests::test_expired" \
+  --description "## Task
+Add a test that verifies expired JWT tokens return 401.
 
-## Task
-1. <Concrete step>
-2. <Concrete step>
+## Steps
+1. Open src/auth/tests/jwt_test.rs
+2. Add test_expired_token_returns_401 using create_test_token() from fixtures
+3. Set expiry to 1 hour ago, assert 401 response
+
+## Context
+\`\`\`rust
+// from src/auth/token.rs
+pub struct AuthToken {
+    pub user_id: UserId,
+    pub expires_at: DateTime<Utc>,
+}
+\`\`\`
 
 ## Files
-- <path/to/file.rs> (<what changes>)
-- <path/to/test.rs> (<what to test>)
+- src/auth/tests/jwt_test.rs (modify)
+- src/auth/tests/fixtures.rs (read — has create_test_token)
+- src/auth/token.rs (read only — do NOT modify)
 
-## Edge Cases
-- <What should fail and how>"
+## Don't
+- Don't modify AuthToken or add dependencies
+- Don't change existing tests"
 ```
 
-**Include**: file paths, what to change in each, edge cases, patterns to follow ("see src/auth.rs").
-**Avoid**: vague directives ("make it work"), assumed context (every bean is read cold).
+## On Failure
 
-The description is the prompt. The better you write it, the less the agent has to figure out.
+**Never retry with identical instructions.** Add what went wrong via `bn update <id> --note "..."`.
 
-## Choosing a Verify Command
-
-Scan the project to pick the right pattern:
-
-```bash
-ls Cargo.toml package.json pyproject.toml go.mod Makefile 2>/dev/null
-```
-
-### By Project Type
-
-| Detected | Pattern | Example |
-|----------|---------|---------|
-| `Cargo.toml` | `cargo test <module>::<test>` | `cargo test auth::test_login` |
-| `package.json` + jest | `npx jest --testPathPattern "<pat>"` | `npx jest auth` |
-| `package.json` + vitest | `npx vitest run <pat>` | `npx vitest run auth` |
-| `pyproject.toml` | `pytest <file> -k "<pat>"` | `pytest tests/test_auth.py -k login` |
-| `go.mod` | `go test ./... -run <Pat>` | `go test ./pkg/auth -run TestLogin` |
-| `Makefile` | `make <target>` | `make test-auth` |
-
-### By Task Type
-
-| Task | Strategy |
-|------|----------|
-| Fix a bug | Test that reproduces the bug: `<test-cmd> <specific_test>` |
-| Add a feature | Tests for the feature: `<test-cmd> <feature_module>` |
-| Refactor | Broad existing tests with `-p`: `<test-cmd>` |
-| Add docs | Check content exists with `-p`: `grep -q '<content>' <file>` |
-| Remove something | Confirm pattern is gone: `! grep -rq '<pattern>' <dir>` |
-| Security fix | Confirm bad pattern is gone: `! grep -rq '<vuln>' src/` |
-
-### Rules
-
-1. **Be specific** — `cargo test auth::refresh` not `cargo test`
-2. **Be deterministic** — no manual checks
-3. **Match the task** — prove THIS task is done
-4. **Chain when needed** — `cargo test auth && cargo clippy`
-
-## Fail-First TDD
-
-On by default. When you create a bean with `--verify`:
-
-1. Verify runs immediately → must **fail** (proving the test is real)
-2. If it already passes → bean **rejected** (test doesn't test anything new)
-3. After your work → `bn close` runs verify → must **pass**
-
-Use `-p` / `--pass-ok` to skip fail-first for refactors, builds, docs — anything where there's no "before" failure state.
-
-## Working on a Bean
-
-### Check Progress
-```bash
-bn verify <id>                    # Run verify without closing
-bn update <id> --note "progress"  # Log what you've done
-```
-
-### Close It
-```bash
-bn close <id>                    # Runs verify → closes if exit 0
-bn close <id> --reason "summary" # With completion note
-```
-
-### If Stuck
-```bash
-bn update <id> --note "blocked: <why>"
-bn claim <id> --release          # Release for another agent to retry
-```
-
-Notes are timestamped and visible to the next agent — they're the handoff protocol.
-
-## Discovering Issues
-
-While working, you'll notice problems that aren't your current task. **Don't fix them. Create a bean.**
-
-```bash
-bn create "bug: logger crashes on unicode" --verify "cargo test logger::unicode"
-bn create "test: no coverage for cache" --verify "cargo test cache::"
-bn create "docs: README missing setup" --verify "grep -q '## Setup' README.md"
-bn create "security: API key in logs" --verify "! grep -r 'api_key.*log' src/"
-```
-
-Don't claim these — stay focused on your current work. Another agent handles them later.
-
-**Type prefixes**: `bug:`, `test:`, `docs:`, `refactor:`, `perf:`, `security:`, `chore:`
-
-## Delegating Work
-
-Use `bn run` to dispatch beans to agents. Set up your agent first:
-
-```bash
-bn init --setup          # Interactive: detects pi, claude, aider on PATH
-bn init --agent pi       # Or pick directly
-```
-
-Then dispatch:
-
-```bash
-bn run                  # Dispatch all ready beans
-bn run 3                # Dispatch a specific bean
-bn run --watch          # Continuous mode: re-dispatch as beans complete
-```
-
-For large beans that need decomposition:
-
-```bash
-bn plan 3               # Break bean 3 into children
-bn plan --auto          # Autonomous (no prompts)
-```
-
-Monitor agents:
-
-```bash
-bn agents               # Show running/completed agents
-bn logs 3               # View agent output for bean 3
-```
-
-| Approach | Who works | Blocks you? |
-|----------|-----------|-------------|
-| `--claim` / `bn quick` | You, now | Yes |
-| `bn run` | Background agents | No |
-| `bn run --watch` | Continuous dispatch | No |
-
-## Decomposition
-
-When a task is too big for one agent, create a parent and break it into children:
-
-```bash
-bn create "feat: auth system" --description "Parent for auth work"
-bn create "Define types" --parent @latest --verify "cargo build" \
-  --produces "AuthProvider,AuthConfig"
-bn create "Implement JWT" --parent <id> --verify "cargo test jwt" \
-  --requires "AuthProvider" --produces "JwtProvider"
-bn create "Integration tests" --parent <id> --verify "cargo test auth::integration" \
-  --requires "JwtProvider"
-```
-
-Children auto-number (`<parent>.1`, `<parent>.2`, ...). Use `produces`/`requires` for automatic dependency resolution — a bean requiring `AuthProvider` is blocked until the bean producing it closes.
-
-View the hierarchy: `bn tree <id>`
-
-## Pipe-Friendly Output
-
-Use `--json` for structured output when composing commands:
-
-```bash
-# Create and capture ID
-ID=$(bn create "task" --verify "test" -p --json | jq -r '.id')
-
-# List just IDs (one per line)
-bn list --ids
-
-# Custom format
-bn list --format '{id}\t{status}\t{title}'
-
-# Batch close from pipe
-bn list --ids | bn close --stdin --force
-
-# Read description from stdin
-cat spec.md | bn create "task" --description - --verify "test"
-
-# Pipe build output into notes
-cargo build 2>&1 | bn update 3 --notes -
-
-# Structured verify result
-bn verify 3 --json   # {"id":"3","passed":false}
-
-# Context as JSON
-bn context 3 --json  # {"id":"3","files":[{"path":"...","content":"..."}]}
-```
-
-## Memory System
-
-Beans doubles as a verified knowledge graph. Tasks and facts share the same data structure with different lifecycles.
-
-### Knowledge Types
-
-| Type | Command | Verification |
-|------|---------|--------------|
-| Verifiable facts | `bn fact` | **Required** — that's the point |
-| Unverifiable knowledge | `agents.md` | None — prose, conventions, preferences |
-| Tasks | `bn create` | Required — completion gate |
-
-**If you can't write a verify command, it's not a fact — it belongs in agents.md.**
-
-### Creating Facts
-
-Facts are verified truths about the project that persist across sessions:
-
-```bash
-bn fact "API uses Axum 0.8" --verify "grep -q 'axum = \"0.8' Cargo.toml"
-bn fact "Auth tokens expire after 24h" --verify "grep -q '24 * 60' src/config.rs"
-bn fact "Tests require Docker" --verify "docker info >/dev/null 2>&1" --ttl 90
-bn fact "Session format is JWT" --verify "grep -q JWT src/auth.rs" --paths "src/auth.rs"
-```
-
-Facts have a TTL (default 30 days). When stale, they appear as warnings in `bn context`.
-
-### Memory Context
-
-Run `bn context` without arguments to get session-start memory:
-
-```bash
-bn context          # Human-readable memory context
-bn context --json   # Machine-readable
-```
-
-Output sections (priority order):
-1. **⚠ WARNINGS** — stale facts, past failures (never truncated)
-2. **► WORKING ON** — claimed beans with attempt history
-3. **✓ RELEVANT FACTS** — scored by path overlap and dependencies
-4. **◷ RECENT WORK** — closed beans from last 7 days
-
-### Searching Memory
-
-```bash
-bn recall "auth"           # Search open beans
-bn recall "JWT" --all      # Include closed/archived
-bn recall "login" --json   # Machine-readable results
-```
-
-Searches titles, descriptions, notes, close reasons, paths, labels, and attempt notes.
-
-### Verifying Facts
-
-Re-check all facts and detect staleness:
-
-```bash
-bn verify-facts
-```
-
-This re-runs every fact's verify command, resets TTLs for passing facts, and reports:
-- **STALE** facts past their TTL
-- **FAILING** facts whose verify commands return non-zero
-- **SUSPECT** facts that depend on artifacts from invalid facts (propagated up to depth 3)
-
-### Attempt Tracking
-
-Every claim→close cycle is tracked as an attempt:
-
-- `bn claim <id>` — starts a new attempt
-- `bn close <id>` — records success
-- `bn close --failed <id> --reason "why"` — records failure, releases claim for retry
-- `bn claim <id> --release` — records abandoned attempt
-
-Failed attempts surface in `bn context` as warnings, preventing agents from repeating mistakes.
-
-```bash
-# Agent gives up explicitly
-bn close --failed 5 --reason "JWT lib incompatible with runtime"
-
-# Next agent sees the warning in bn context:
-# ⚠ PAST FAILURE [5]: "JWT lib incompatible with runtime"
-```
-
-## Command Reference
-
-| Command | Purpose |
-|---------|---------|
-| `bn create "..." --verify "..."` | **Create a bean** (`--json` for piped output) |
-| `bn quick "..." --verify "..."` | Create + claim in one step |
-| `bn status` | Overview: claimed, ready, blocked |
-| `bn ready` | Unblocked tasks |
-| `bn claim <id>` | Claim a task |
-| `bn show <id>` | Full bean details (the prompt) |
-| `bn context <id>` | Files referenced in description (`--json`) |
-| `bn context` | Memory context (stale facts, in-progress, recent) |
-| `bn verify <id>` | Test verify without closing (`--json`) |
-| `bn close <id>` | Close (verify must pass, `--stdin` for batch) |
-| `bn close <id> --force` | Force close (skip verify) |
-| `bn close --failed <id>` | Mark attempt as failed (release for retry) |
-| `bn update <id> --note "..."` | Log progress (`--description -` reads stdin) |
-| `bn claim <id> --release` | Release claim |
-| `bn fact "..." --verify "..."` | Create a verified fact |
-| `bn recall "query"` | Search beans by keyword |
-| `bn verify-facts` | Re-verify all facts, detect staleness |
-| `bn run [id] [-j N]` | Dispatch ready beans to agents |
-| `bn run --watch` | Watch mode: auto-dispatch on changes |
-| `bn plan [id] [--auto]` | Decompose a large bean into children |
-| `bn agents` | Show running/completed agents |
-| `bn logs <id>` | View agent output for a bean |
-| `bn tree` / `bn tree <id>` | View hierarchy |
-| `bn list` | List beans (`--ids`, `--format`, `--json`) |
-| `bn dep add <id> <dep>` | Add explicit dependency |
-| `bn tidy` | Archive closed, release stale claims |
-| `bn doctor` | Health check |
-
-### Selectors
-
-Use instead of numeric IDs: `@latest`, `@ready`, `@blocked`, `@me`
-
-## The Verify Gate
-
-**You cannot close without proof.** If verify fails, the task stays open, the attempt counter increments, and another agent can retry. This prevents incomplete work from slipping through.
+If an agent fails twice, the bean is too big or underspecified — `bn plan <id>` to break it down.

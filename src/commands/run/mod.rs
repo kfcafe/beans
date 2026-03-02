@@ -322,13 +322,7 @@ fn run_once(
                     eprintln!("Wave {}: {} bean(s)", wave_idx + 1, wave.beans.len());
                 }
 
-                let results = run_wave(
-                    beans_dir,
-                    &wave.beans,
-                    spawn_mode,
-                    &run_cfg,
-                    wave_idx + 1,
-                )?;
+                let results = run_wave(beans_dir, &wave.beans, spawn_mode, &run_cfg, wave_idx + 1)?;
 
                 let mut wave_success = 0usize;
                 let mut wave_failed = 0usize;
@@ -638,11 +632,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         let mode = determine_spawn_mode(&config);
         assert_eq!(
@@ -669,11 +663,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         let mode = determine_spawn_mode(&config);
         assert_eq!(mode, SpawnMode::Direct);

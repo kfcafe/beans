@@ -25,11 +25,11 @@ fn setup_test_env() -> (TempDir, std::path::PathBuf) {
         extends: vec![],
         rules_file: None,
         file_locking: false,
-    on_close: None,
-    on_fail: None,
-    post_plan: None,
-    verify_timeout: None,
-    review: None,
+        on_close: None,
+        on_fail: None,
+        post_plan: None,
+        verify_timeout: None,
+        review: None,
     };
     config.save(&beans_dir).unwrap();
 
@@ -54,11 +54,12 @@ fn create_claim_without_criteria_shows_error() {
         parent: None,
         produces: None,
         requires: None,
+        paths: None,
         on_fail: None,
         pass_ok: true,
         claim: true,
         by: Some("agent-1".to_string()),
-            verify_timeout: None,
+        verify_timeout: None,
     };
 
     let result = cmd_create(&beans_dir, args);
@@ -92,11 +93,12 @@ fn create_claim_with_acceptance_succeeds() {
         parent: None,
         produces: None,
         requires: None,
+        paths: None,
         on_fail: None,
         pass_ok: true,
         claim: true,
         by: None,
-            verify_timeout: None,
+        verify_timeout: None,
     };
 
     let result = cmd_create(&beans_dir, args);
@@ -121,11 +123,12 @@ fn create_claim_with_verify_succeeds() {
         parent: None,
         produces: None,
         requires: None,
+        paths: None,
         on_fail: None,
         pass_ok: true,
         claim: true,
         by: None,
-            verify_timeout: None,
+        verify_timeout: None,
     };
 
     let result = cmd_create(&beans_dir, args);
@@ -150,11 +153,12 @@ fn create_without_claim_no_criteria_succeeds() {
         parent: None,
         produces: None,
         requires: None,
+        paths: None,
         on_fail: None,
         pass_ok: true,
         claim: false,
         by: None,
-            verify_timeout: None,
+        verify_timeout: None,
     };
 
     let result = cmd_create(&beans_dir, args);
@@ -183,11 +187,12 @@ fn create_claim_with_parent_no_criteria_succeeds() {
         parent: None,
         produces: None,
         requires: None,
+        paths: None,
         on_fail: None,
         pass_ok: true,
         claim: false,
         by: None,
-            verify_timeout: None,
+        verify_timeout: None,
     };
     cmd_create(&beans_dir, parent_args).unwrap();
 
@@ -206,11 +211,12 @@ fn create_claim_with_parent_no_criteria_succeeds() {
         parent: Some("1".to_string()),
         produces: None,
         requires: None,
+        paths: None,
         on_fail: None,
         pass_ok: true,
         claim: true,
         by: Some("agent-2".to_string()),
-            verify_timeout: None,
+        verify_timeout: None,
     };
 
     let result = cmd_create(&beans_dir, child_args);

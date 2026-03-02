@@ -101,10 +101,9 @@ version: 0.1.0
 | `bn close <id>` | Close bean (runs verify) |
 | `bn verify <id>` | Run verify command without closing |
 | `bn claim <id>` | Atomically claim bean for work |
-| `bn ready` | Show ready beans (open, no blockers) |
-| `bn blocked` | Show blocked beans |
+| `bn status` | Overview: claimed, ready, goals, blocked |
 | `bn tree [id]` | Hierarchical tree view |
-| `bn dep add/remove/list/tree` | Dependency management |
+| `bn dep add/remove/list` | Dependency management |
 | `bn graph [--format]` | Dependency graph (mermaid/dot) |
 | `bn stats` | Project statistics |
 | `bn doctor` | Health check |

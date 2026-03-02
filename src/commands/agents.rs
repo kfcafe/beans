@@ -144,9 +144,7 @@ pub fn cmd_agents(_beans_dir: &Path, json: bool) -> Result<()> {
     // Remove completed entries older than 1 hour
     let one_hour_ago = now - 3600;
     let before_len = agents.len();
-    agents.retain(|_id, entry| {
-        entry.finished_at.map(|f| f > one_hour_ago).unwrap_or(true)
-    });
+    agents.retain(|_id, entry| entry.finished_at.map(|f| f > one_hour_ago).unwrap_or(true));
     if agents.len() != before_len {
         changed = true;
     }

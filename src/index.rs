@@ -279,7 +279,8 @@ impl Index {
         Ok(entries)
     }
 
-    /// Recursively walk archive directory and collect bean entries
+    /// Recursively walk archive directory and collect bean entries.
+    /// Uses catch_unwind to survive YAML parser panics from corrupt files.
     fn walk_archive_dir(dir: &Path, entries: &mut Vec<IndexEntry>) -> Result<()> {
         use crate::bean::Bean;
 
@@ -292,14 +293,21 @@ impl Index {
             let path = entry.path();
 
             if path.is_dir() {
-                // Recurse into subdirectories (year/month)
                 Self::walk_archive_dir(&path, entries)?;
             } else if path.is_file() {
-                // Check if it's a bean file
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
                     if is_bean_filename(filename) {
-                        if let Ok(bean) = Bean::from_file(&path) {
-                            entries.push(IndexEntry::from(&bean));
+                        let path_clone = path.clone();
+                        let result = std::panic::catch_unwind(|| Bean::from_file(&path_clone));
+                        match result {
+                            Ok(Ok(bean)) => entries.push(IndexEntry::from(&bean)),
+                            Ok(Err(_)) => {} // normal parse error, skip silently
+                            Err(_) => {
+                                eprintln!(
+                                    "warning: skipping corrupt archive file (parser panic): {}",
+                                    path.display()
+                                );
+                            }
                         }
                     }
                 }

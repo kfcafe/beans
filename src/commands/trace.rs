@@ -160,7 +160,11 @@ fn collect_parent_chain(
     visited.insert(pid.clone());
 
     if let Some(entry) = index.beans.iter().find(|e| &e.id == pid) {
-        let mut chain = vec![bean_summary(entry.id.clone(), entry.title.clone(), &entry.status)];
+        let mut chain = vec![bean_summary(
+            entry.id.clone(),
+            entry.title.clone(),
+            &entry.status,
+        )];
         chain.extend(collect_parent_chain(index, &entry.parent, visited));
         chain
     } else {
@@ -403,7 +407,11 @@ mod tests {
         write_bean(beans_dir, &main_bean);
 
         let result = cmd_trace("12", false, beans_dir);
-        assert!(result.is_ok(), "cmd_trace with parent/deps failed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "cmd_trace with parent/deps failed: {:?}",
+            result
+        );
     }
 
     #[test]

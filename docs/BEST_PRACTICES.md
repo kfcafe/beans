@@ -6,7 +6,7 @@ A walkthrough guide for agents (and developers) on creating, executing, and mana
 
 ## Table of Contents
 
-1. [Beans vs Todos: When to Use Each](#beans-vs-todos-when-to-use-each)
+1. [When to Create a Bean](#when-to-create-a-bean)
 2. [Bean Anatomy](#bean-anatomy)
 3. [Creating Effective Beans](#creating-effective-beans)
 4. [Writing Descriptions That Agents Can Execute](#writing-descriptions-that-agents-can-execute)
@@ -19,41 +19,25 @@ A walkthrough guide for agents (and developers) on creating, executing, and mana
 
 ---
 
-## Beans vs Todos: When to Use Each
+## When to Create a Bean
 
-Both beans and todos track work, but they optimize for different scenarios. Choose the right tool for the task at hand.
+Create a bean when the work needs **tracking, verification, or delegation**.
 
-### Use **Beans** when:
+### Create a bean when:
 
 - **Multi-step work** — The task spans 3+ steps or multiple files
 - **Verification matters** — You need a concrete command to prove it's done
-- **Agents will execute it** — The work is handed to an LLM agent to implement autonomously
+- **Agents will execute it** — The work will be dispatched to an agent via `bn run`
 - **Dependencies exist** — Some work blocks other work
 - **Context is complex** — Rich background, multiple file references, strategic decisions
-- **Reusable for future sessions** — The work description needs to persist across attempts
+- **Retry is likely** — The work might fail and need another attempt with accumulated context
 - **Decomposition helps** — Breaking into smaller sub-beans clarifies the path forward
 
-### Use **Todos** when:
+### Don't create a bean for:
 
-- **Single session work** — You're doing it right now, in this conversation
-- **Straightforward task** — Single simple action (add a comment, run a command, fix a typo)
-- **No verification needed** — Obvious when it's done (no test, no command to run)
-- **Human doing the work** — Not handing off to an autonomous agent
-- **Quick coordination** — Tracking what we're doing in the next 5 steps of this session
-
-### Decision Tree
-
-```
-Does the work span multiple steps/files?
-├─ No, it's simple → USE TODOS
-└─ Yes, it's multi-step
-   ├─ Is an agent executing it?
-   │  ├─ No, you're doing it → USE TODOS (maybe)
-   │  └─ Yes, agent will execute → USE BEANS
-   └─ Will it need retry attempts?
-      ├─ No → USE TODOS
-      └─ Yes → USE BEANS
-```
+- **Trivial fixes** — One-line typo corrections, adding a comment
+- **Questions or lookups** — "What does this function do?" isn't a task
+- **Work you're doing right now** — If you'll finish it in the next 5 minutes, just do it
 
 ---
 
@@ -188,7 +172,7 @@ title: Add a comment to the refresh function
 description: Explain what the signature validation does
 ```
 
-Use a todo for this, not a bean.
+Too small for a bean — just do it directly.
 
 ### Estimating Bean Size
 
@@ -480,63 +464,41 @@ verify: npm test -- --grep "register" && npm run build
 
 ---
 
-## The Agent Toolkit
+## Agent Context
 
-When executing beans, agents have access to a powerful toolkit from `~/.claude/skills/agent-prompt-template.md`:
+`bn context <id>` is the single source of truth for an agent working on a bean. It outputs a complete briefing:
 
-### Context Gathering (Do This First)
+1. **Bean spec** — ID, title, verify command, priority, status, description, acceptance criteria
+2. **Previous attempts** — what was tried and why it failed (from attempt log and notes)
+3. **Project rules** — conventions from `.beans/RULES.md`
+4. **Dependency context** — descriptions of sibling beans that produce artifacts this bean requires
+5. **File structure** — function signatures and imports for referenced files
+6. **File contents** — full source of all referenced files
 
 ```bash
-# Get all files referenced in a bean's description
-bn context <bean-id>
-
-# Check project specs for constraints
-spec context "token refresh implementation"
+bn context 3              # Complete agent context for bean 3
+bn context 3 --structure-only  # Signatures only (smaller output)
+bn context 3 --json       # Machine-readable
 ```
 
-Use `bn context` to get files referenced in bean descriptions. This solves the "cold start" problem—instead of exploring, you get all relevant files immediately.
-
-### Safety & Rollback
-
-```bash
-# Create rollback point before risky changes
-undo checkpoint "before-refresh-impl"
-
-# Roll back if things go wrong
-undo restore {checkpoint-id}
-```
-
-### Verification
+File paths come from two sources:
+- **Explicit `paths` field** — set via `--paths` on `bn create` (takes priority)
+- **Regex-extracted** — file paths mentioned naturally in the description text
 
 ```bash
-# Fast check after significant edits (lint + types)
-verify --quick
-
-# Full check before committing (lint, types, build, test)
-verify
-```
-
-### Error Recovery
-
-```bash
-# Check if this error has a known solution
-error-db match "{error message}"
-
-# Iterate until tests pass
-loop start "{fix task}" --promise "{test cmd}"
-
-# Record new error pattern for future agents
-error-db add --pattern "{regex}" --solution "{fix}"
+# Explicit paths ensure the right files are always included
+bn create "fix auth" --verify "cargo test auth" \
+  --paths "src/auth.rs,src/middleware.rs"
 ```
 
 ### Handoff Notes
 
-```bash
-# Write notes for downstream workers
-bn update <bean-id> --note "Implemented X in file Y, tests in Z"
-```
+Log progress and failures so the next agent (or human) knows what happened:
 
-This toolkit is **standard for all agents** in the project. Agents should use these tools instead of exploring blindly.
+```bash
+bn update <id> --note "Implemented X in file Y, tests in Z"
+bn update <id> --note "Failed: JWT lib incompatible. Avoid: jsonwebtoken 8.x"
+```
 
 ---
 
@@ -544,36 +506,30 @@ This toolkit is **standard for all agents** in the project. Agents should use th
 
 This is how agents use beans in practice.
 
-### Step 0: Prepare Context (New!)
+### Step 0: Prepare Context
 
-Before claiming, agents gather context with the toolkit:
+Before claiming, agents gather the complete context:
 
 ```bash
-# Get files referenced in bean description
-bn context <bean-id>
-
-# Check project specs
-spec context "user authentication"
-
-# Create rollback point
-undo checkpoint "before-registration-impl"
+bn context <bean-id>      # Complete briefing: spec, attempts, rules, deps, files
 ```
 
-This prevents wasted time exploring blindly.
+This outputs everything the agent needs — no exploring required.
 
 ### Step 1: Agent Claims Work
 
 Agent finds ready beans:
 
 ```bash
-bn ready
+bn status
 ```
 
-Output:
+Output shows the Ready section:
 ```
-P0  1.1   Implement user registration endpoint
-P1  1.2   Implement login endpoint
-P2  2.1   Token refresh logic
+## Ready (3)
+  1.1 [ ] Implement user registration endpoint
+  1.2 [ ] Implement login endpoint
+  2.1 [ ] Token refresh logic
 ```
 
 Agent claims a bean (atomic — only one agent can win):
@@ -593,31 +549,16 @@ Status transitions: **open → in_progress**. The bean is now claimed by this ag
 
 ### Step 2: Agent Works
 
-Agent modifies code, writes tests, iterates locally. Uses toolkit for safety:
+Agent modifies code, writes tests, iterates locally:
 
 ```bash
-# Make changes
-vim src/routes/auth.rs
-# ... implement ...
-
-# Quick verification (fast)
-verify --quick
-# If OK, continue...
-
-# Write tests
-vim tests/auth.test.ts
-# ...
+# ... implement the feature ...
 
 # Test the bean's verify command (without closing)
 bn verify 1.1
 ```
 
-This runs the verify command **without closing the bean**. If tests fail, agent debugs or rolls back:
-
-```bash
-# If needed, roll back to checkpoint
-undo restore {checkpoint-id}
-```
+This runs the verify command **without closing the bean**. If tests fail, agent debugs and retries.
 
 **Mid-work notes (recommended):**
 
@@ -634,10 +575,6 @@ Notes are timestamped automatically. Useful for logging progress if the bean nee
 Agent believes work is done:
 
 ```bash
-# Full verification before closing (lint, types, build, test)
-verify
-
-# If all checks pass:
 bn close 1.1
 ```
 
@@ -650,19 +587,18 @@ What happens:
 
 Verify fails (exit code non-zero):
 
-1. All changes are undone (via `/ai-tools` or manual revert)
-2. Status stays: **in_progress → open**
-3. `attempts` incremented
-4. Claim is released
-5. Bean is available for retry
+1. Status stays: **in_progress → open**
+2. `attempts` incremented
+3. Claim is released
+4. Bean is available for retry
 
 **Retry example:**
 
 Agent 1 claimed 1.1, worked, failed verify, released.
-Agent 2 runs `bn ready`, sees 1.1 again.
+Agent 2 runs `bn status`, sees 1.1 in the Ready section.
 Agent 2 claims 1.1, reads `.beans/1.1.yaml` and notes from Agent 1.
-Agent 2 gathers fresh context with toolkit (bn context, spec context).
-Agent 2 knows what Agent 1 tried and avoids the same mistake.
+Agent 2 runs `bn context 1.1` and sees the full briefing including Agent 1's attempt notes.
+Agent 2 knows what was tried and avoids the same mistake.
 
 #### Middle Path: Release Without Closing
 
@@ -692,9 +628,6 @@ bn update 1.1 --note "Implemented registration in src/routes/auth.rs, tests in t
 # Commit with bean ID prefix
 git add -A
 git commit -m "[beans-1.1] Implement user registration endpoint"
-
-# Sync at session end (optional)
-bn sync --flush-only
 ```
 
 ### Step 4: Dependents Become Ready
@@ -705,7 +638,7 @@ Once 1.1 is closed, any bean that depended on it becomes ready:
 bn dep add 1.2 1.1    # "1.2 depends on 1.1"
 # ...later...
 bn close 1.1          # closes successfully
-bn ready              # now shows 1.2
+bn status             # now shows 1.2 in Ready section
 ```
 
 ---
@@ -765,20 +698,18 @@ bn dep add 3 2
 ### Understand Blocking
 
 ```bash
-bn ready    # Shows only beans with no blocking dependencies
-bn blocked  # Shows beans waiting on dependencies
+bn status   # Shows ready beans (no blockers) and blocked beans in one view
 ```
 
 ### Dependency Visualization
 
 ```bash
-bn dep tree 1
+bn graph
 ```
 
 Output:
 ```
-1
-├─ 2 (depends on 1)
+[ ] 1  Task one
 │  ├─ 3 (depends on 2)
 │  └─ 4 (depends on 2)
 └─ 5 (depends on 1)
@@ -827,13 +758,13 @@ Both 2.1 and 2.2 depend on 1.1. 3.1 depends on both 2.1 and 2.2. Can't start 3.1
 
 ### Cycle Detection
 
-Avoid cycles (A depends on B, B depends on A):
+Avoid cycles (A depends on B, B depends on A). Use `bn doctor` to detect them:
 
 ```bash
-bn dep cycles
+bn doctor
 ```
 
-If you see output, fix it or the system gets stuck.
+If you see cycle warnings, fix them or the system gets stuck.
 
 ---
 
@@ -933,15 +864,15 @@ verify: npm test -- --grep "register"
 
 **Problem:** A depends on B, B depends on A.
 
-**Symptom:** `bn ready` returns nothing. No progress possible.
+**Symptom:** `bn status` shows no ready beans. No progress possible.
 
-**Fix:** Use `bn dep cycles` and break the cycle.
+**Fix:** Use `bn doctor` to detect cycles and break them.
 
 ```bash
 # Detect cycles
-bn dep cycles
+bn doctor
 
-# Output: "Cycle detected: 1 → 2 → 1"
+# Output: "[!] Dependency cycle detected: 1 -> 2"
 
 # Break it
 bn dep remove 2 1  # or restructure dependencies
@@ -1229,12 +1160,17 @@ Output:
 #### Step 5: Check Readiness
 
 ```bash
-bn ready
+bn status
 ```
 
 Output:
 ```
-P0  2.1   Implement registration endpoint
+## Ready (1)
+  2.1 [ ] Implement registration endpoint
+
+## Blocked (2)
+  2.2 [!] Implement login endpoint
+  2.3 [!] Implement token refresh endpoint
 ```
 
 Only 2.1 is ready (no blockers). 2.2 and 2.3 are blocked.
@@ -1316,13 +1252,11 @@ Verify passes. Bean closes.
 
 All work in the project follows a standard workflow:
 
-1. **Understand** — `bn context <bean-id>` + `spec context` before touching code
+1. **Understand** — `bn context <id>` to get the complete briefing before touching code
 2. **Plan** — Single task: just do it. Multi-step: break into beans with `bn create` or `bn plan`
 3. **Implement** — Single bean: implement directly. Epic: `bn run` to dispatch agents in parallel
-4. **Verify** — `verify` before committing (lint, types, build, test)
-5. **Close** — `bn close <id>` when verified, `bn sync --flush-only` at session end
-
-This ensures consistency across all bean execution and agent work.
+4. **Verify** — `bn verify <id>` to test without closing
+5. **Close** — `bn close <id>` when verify passes
 
 ---
 
@@ -1333,10 +1267,11 @@ Beans is evolving from a task tracker into a comprehensive orchestration platfor
 ### Planned Companion Tools
 
 **`bn context`** — Context Assembler (Killer App for Agents)
-- Reads a bean, extracts file paths from description, concatenates file contents
+- Single source of truth: outputs bean spec, attempts, rules, dependency context, and file contents
+- Merges explicit `--paths` with regex-extracted paths from description
 - Solves the "cold start" problem for agents
 - Usage: `bn context 3.2 | llm "Implement this"`
-- Status: Partially implemented (1.1, 1.2)
+- Status: **Implemented**
 
 **`bpick`** — Fuzzy Selector
 - Interactive bean selection using `fzf`
@@ -1393,7 +1328,7 @@ Already available:
 - Hook system — Pre-close hooks for CI gatekeeper patterns
 - Archive system — Auto-archiving closed beans to dated directories
 - Multi-format support — YAML and Markdown
-- Agent toolkit — bn context, undo checkpoints, error-db, loop integration
+- Agent context — `bn context <id>` outputs complete agent briefing (spec, attempts, rules, deps, files)
 
 ---
 
@@ -1401,13 +1336,13 @@ Already available:
 
 ### Key Takeaways
 
-1. **Beans for multi-step work that agents execute.** Todos for quick in-session tasks.
+1. **Beans for work that needs tracking, verification, or delegation.** Trivial fixes don't need beans.
 2. **Size beans to ~1-5 files, 1-5 functions.** Bigger = split into children.
-3. **Write descriptions for cold reads.** Assume the agent doesn't have context.
+3. **Write descriptions for cold reads.** Assume the agent has no prior context.
 4. **Acceptance criteria must be testable.** Verify command proves it.
 5. **Use hierarchy for decomposition** (parent/child), **dependencies for blocking** (A waits for B).
 6. **Parents provide context.** Leaves are executable.
-7. **Agents use the toolkit** (bn context, undo, verify, error-db) instead of exploring blindly.
+7. **`bn context <id>` is the single source of truth** — agents read it before starting work.
 8. **Agents claim atomically.** Only one agent per bean.
 9. **Verify gates closing.** No force-close. If verify fails, retry with a fresh agent.
 10. **Notes are the execution log.** Timestamp automatically, visible to next agent.
@@ -1431,8 +1366,7 @@ Already available:
 - [ ] **Labels** — Tagged for organization (optional but helpful)
 
 #### Before Agent Execution
-- [ ] **Bean is in ready state** — `bn ready` shows it
-- [ ] **Agent has toolkit installed** — bn context, undo, verify, error-db
+- [ ] **Bean is in ready state** — `bn status` shows it in the Ready section
 - [ ] **Acceptance criteria are complete** — No ambiguity
 - [ ] **Verify command is tested** — You've run it locally
 
@@ -1443,22 +1377,18 @@ If all checked, the bean is ready for an agent to claim.
 ## Further Reading
 
 **Project Documentation:**
-- [beans README.md](./README.md) — System overview and commands
-- [Bean YAML Format](./README.md#a-bean-looks-like-this) — Field reference
-- [Agent Workflow](./README.md#agent-workflow) — How agents execute beans
-- [TODO.md](./TODO.md) — Strategic vision and roadmap
-
-**Agent Resources:**
-- [Agent Toolkit Instructions](../.claude/skills/agent-prompt-template.md) — Toolkit for spawned agents (bn context, undo, verify, error-db)
-- Agent prompt template includes: context gathering, safety, verification, error recovery, handoff
+- [beans README.md](../README.md) — System overview and commands
+- [Agent Skill](./SKILL.md) — Quick reference for AI agents
+- [Agent Workflow](../README.md#agent-workflow) — How agents execute beans
 
 **Command Reference:**
 - `bn --help` — Full CLI help
 - `bn <command> --help` — Help for specific command
 
 **Key Commands:**
+- `bn context <id>` — Complete agent briefing (single source of truth)
 - `bn run [id]` — Dispatch ready beans to agents
-- `bn run --watch` — Continuous dispatch mode
+- `bn run --loop` — Continuous dispatch mode
 - `bn plan [id]` — Decompose large beans into children
 - `bn agents` / `bn logs <id>` — Monitor agents and view output
 - `bn init --agent <preset>` — Guided agent setup
@@ -1466,8 +1396,7 @@ If all checked, the bean is ready for an agent to claim.
 - `bn claim <id> --release` — Release claim
 - `bn verify <id>` — Test verify without closing
 - `bn edit <id>` — Edit in $EDITOR with validation
-- Smart selectors: `@latest`, `@blocked`, `@ready`, `@parent`, `@me`
 
 ---
 
-*Last updated: 2026-02-23*
+*Last updated: 2026-03-01*

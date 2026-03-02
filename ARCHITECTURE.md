@@ -195,7 +195,7 @@ main.rs ──▶ cli.rs (parse) ──▶ commands/*.rs (execute)
 | Build release | `cargo build --release` |
 | Test | `cargo test` |
 | Install from source | `cargo install --path .` |
-| Install from git | `cargo install --git https://github.com/opus-workshop/beans` |
+| Install from git | `cargo install --git https://github.com/kfcafe/beans` |
 
 ### No CI/CD configured
 No GitHub Actions, Makefile, or Justfile. Tests run locally only.

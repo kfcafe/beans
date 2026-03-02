@@ -1,5 +1,8 @@
 /target
 
+# Regenerable cache — rebuilt automatically by bn sync
+.beans/index.yaml
+
 # File lock used by bn for concurrent index access
 .beans/index.lock
 

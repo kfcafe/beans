@@ -6,7 +6,7 @@ use chrono::Utc;
 
 use crate::bean::Bean;
 use crate::discovery::find_bean_file;
-use crate::graph::{build_dependency_tree, build_full_graph, detect_cycle, find_all_cycles};
+use crate::graph::detect_cycle;
 use crate::index::Index;
 
 /// Add a dependency: `bn dep add <id> <depends-on-id>`
@@ -135,41 +135,6 @@ pub fn cmd_dep_list(beans_dir: &Path, id: &str) -> Result<()> {
     } else {
         for dep in dependents {
             println!("  {} {}", dep.id, dep.title);
-        }
-    }
-
-    Ok(())
-}
-
-/// Show dependency tree: `bn dep tree [id]`
-/// If id provided, show tree rooted at that bean.
-/// If no id, show project-wide DAG.
-pub fn cmd_dep_tree(beans_dir: &Path, id: Option<&str>) -> Result<()> {
-    let index = Index::load_or_rebuild(beans_dir)?;
-
-    let tree = if let Some(id) = id {
-        build_dependency_tree(&index, id)?
-    } else {
-        build_full_graph(&index)?
-    };
-
-    println!("{}", tree);
-
-    Ok(())
-}
-
-/// Detect cycles: `bn dep cycles`
-pub fn cmd_dep_cycles(beans_dir: &Path) -> Result<()> {
-    let index = Index::load_or_rebuild(beans_dir)?;
-    let cycles = find_all_cycles(&index)?;
-
-    if cycles.is_empty() {
-        println!("No cycles detected.");
-    } else {
-        println!("Dependency cycles detected:");
-        for cycle in cycles {
-            let cycle_str = cycle.join(" -> ");
-            println!("  {} -> {} (repeats)", cycle_str, cycle[0]);
         }
     }
 

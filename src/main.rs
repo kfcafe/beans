@@ -11,13 +11,12 @@ use bn::commands::create::CreateArgs;
 use bn::commands::plan::PlanArgs;
 use bn::commands::quick::QuickArgs;
 use bn::commands::{
-    cmd_adopt, cmd_agents, cmd_blocked, cmd_claim, cmd_close, cmd_config_get, cmd_config_set,
-    cmd_context, cmd_create, cmd_delete, cmd_dep_add, cmd_dep_cycles, cmd_dep_list, cmd_dep_remove,
-    cmd_dep_tree, cmd_doctor, cmd_edit, cmd_fact, cmd_graph, cmd_init, cmd_list, cmd_locks,
-    cmd_locks_clear, cmd_logs, cmd_mcp_serve, cmd_memory_context, cmd_plan, cmd_quick,
-    cmd_ready, cmd_recall, cmd_release, cmd_reopen, cmd_run, cmd_show, cmd_stats,
-    cmd_status, cmd_sync, cmd_tidy, cmd_trace, cmd_tree, cmd_trust, cmd_unarchive, cmd_update,
-    cmd_verify, cmd_verify_facts,
+    cmd_adopt, cmd_agents, cmd_claim, cmd_close, cmd_config_get, cmd_config_set, cmd_context,
+    cmd_create, cmd_delete, cmd_dep_add, cmd_dep_list, cmd_dep_remove, cmd_doctor, cmd_edit,
+    cmd_fact, cmd_graph, cmd_init, cmd_list, cmd_locks, cmd_locks_clear, cmd_logs, cmd_mcp_serve,
+    cmd_memory_context, cmd_plan, cmd_quick, cmd_recall, cmd_release, cmd_reopen, cmd_run,
+    cmd_show, cmd_stats, cmd_status, cmd_sync, cmd_tidy, cmd_trace, cmd_tree, cmd_trust,
+    cmd_unarchive, cmd_update, cmd_verify, cmd_verify_facts,
     review::{cmd_review, ReviewArgs},
 };
 use bn::discovery::find_beans_dir;
@@ -106,6 +105,7 @@ fn main() -> Result<()> {
                 deps,
                 produces,
                 requires,
+                paths,
                 on_fail,
                 pass_ok,
                 verify_timeout,
@@ -131,6 +131,7 @@ fn main() -> Result<()> {
                 deps,
                 produces,
                 requires,
+                paths: next_paths,
                 on_fail,
                 pass_ok,
                 verify_timeout,
@@ -190,6 +191,7 @@ fn main() -> Result<()> {
                         parent,
                         produces,
                         requires,
+                        paths: next_paths,
                         on_fail,
                         pass_ok,
                         claim,
@@ -308,6 +310,7 @@ fn main() -> Result<()> {
                         parent,
                         produces,
                         requires,
+                        paths,
                         on_fail,
                         pass_ok,
                         verify_timeout,
@@ -480,7 +483,12 @@ fn main() -> Result<()> {
             Ok(())
         }
 
-        Command::Claim { id, release, by, force } => {
+        Command::Claim {
+            id,
+            release,
+            by,
+            force,
+        } => {
             validate_bean_id(&id)?;
             let resolved_id = resolve_bean_id(&id, &beans_dir)?;
             if release {
@@ -522,17 +530,8 @@ fn main() -> Result<()> {
                 let resolved_id = resolve_bean_id(&id, &beans_dir)?;
                 cmd_dep_list(&beans_dir, &resolved_id)
             }
-            DepCommand::Tree { id } => {
-                if let Some(ref id_val) = id {
-                    validate_bean_id(id_val)?;
-                }
-                cmd_dep_tree(&beans_dir, id.as_deref())
-            }
-            DepCommand::Cycles => cmd_dep_cycles(&beans_dir),
         },
 
-        Command::Ready { json } => cmd_ready(json, &beans_dir),
-        Command::Blocked { json } => cmd_blocked(json, &beans_dir),
         Command::Status { json } => cmd_status(json, &beans_dir),
 
         Command::Context {

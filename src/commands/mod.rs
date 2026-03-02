@@ -21,7 +21,6 @@ pub mod memory_context;
 pub mod plan;
 pub mod quick;
 
-pub mod ready;
 pub mod recall;
 pub mod reopen;
 pub mod review;
@@ -47,7 +46,7 @@ pub use config_cmd::{cmd_config_get, cmd_config_set};
 pub use context::cmd_context;
 pub use create::{cmd_create, cmd_create_next};
 pub use delete::cmd_delete;
-pub use dep::{cmd_dep_add, cmd_dep_cycles, cmd_dep_list, cmd_dep_remove, cmd_dep_tree};
+pub use dep::{cmd_dep_add, cmd_dep_list, cmd_dep_remove};
 pub use doctor::cmd_doctor;
 pub use edit::{cmd_edit, load_backup, open_editor};
 pub use fact::{cmd_fact, cmd_verify_facts};
@@ -61,7 +60,7 @@ pub use memory_context::cmd_memory_context;
 pub use plan::cmd_plan;
 pub use quick::cmd_quick;
 
-pub use ready::{cmd_blocked, cmd_ready};
+
 pub use recall::cmd_recall;
 pub use reopen::cmd_reopen;
 pub use review::{cmd_review, ReviewArgs};

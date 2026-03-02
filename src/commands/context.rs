@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -6,6 +7,7 @@ use crate::bean::{AttemptOutcome, Bean};
 use crate::config::Config;
 use crate::ctx_assembler::{assemble_context, extract_paths, read_file};
 use crate::discovery::find_bean_file;
+use crate::index::Index;
 
 /// Load project rules from the configured rules file.
 ///
@@ -286,17 +288,163 @@ fn format_structure_block(structures: &[(&str, String)]) -> Option<String> {
     ))
 }
 
+// ─── Bean spec formatting ────────────────────────────────────────────────────
+
+/// Format the bean's core spec as the first section of the context output.
+fn format_bean_spec_section(bean: &Bean) -> String {
+    let mut s = String::new();
+    s.push_str("═══ BEAN ════════════════════════════════════════════════════\n");
+    s.push_str(&format!("ID: {}\n", bean.id));
+    s.push_str(&format!("Title: {}\n", bean.title));
+    s.push_str(&format!("Priority: P{}\n", bean.priority));
+    s.push_str(&format!("Status: {}\n", bean.status));
+
+    if let Some(ref verify) = bean.verify {
+        s.push_str(&format!("Verify: {}\n", verify));
+    }
+
+    if !bean.produces.is_empty() {
+        s.push_str(&format!("Produces: {}\n", bean.produces.join(", ")));
+    }
+    if !bean.requires.is_empty() {
+        s.push_str(&format!("Requires: {}\n", bean.requires.join(", ")));
+    }
+    if !bean.dependencies.is_empty() {
+        s.push_str(&format!("Dependencies: {}\n", bean.dependencies.join(", ")));
+    }
+    if let Some(ref parent) = bean.parent {
+        s.push_str(&format!("Parent: {}\n", parent));
+    }
+
+    if let Some(ref desc) = bean.description {
+        s.push_str(&format!("\n## Description\n{}\n", desc));
+    }
+    if let Some(ref acceptance) = bean.acceptance {
+        s.push_str(&format!("\n## Acceptance Criteria\n{}\n", acceptance));
+    }
+
+    s.push_str("═════════════════════════════════════════════════════════════\n\n");
+    s
+}
+
+// ─── Dependency context ──────────────────────────────────────────────────────
+
+/// Information about a sibling bean that produces an artifact this bean requires.
+struct DepProvider {
+    artifact: String,
+    bean_id: String,
+    bean_title: String,
+    status: String,
+    description: Option<String>,
+}
+
+/// Resolve dependency context: find sibling beans that produce artifacts
+/// this bean requires, and load their descriptions.
+fn resolve_dependency_context(beans_dir: &Path, bean: &Bean) -> Vec<DepProvider> {
+    if bean.requires.is_empty() {
+        return Vec::new();
+    }
+
+    let index = match Index::load_or_rebuild(beans_dir) {
+        Ok(idx) => idx,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut providers = Vec::new();
+
+    for required in &bean.requires {
+        let producer = index.beans.iter().find(|e| {
+            e.id != bean.id && e.parent == bean.parent && e.produces.contains(required)
+        });
+
+        if let Some(entry) = producer {
+            let desc = find_bean_file(beans_dir, &entry.id)
+                .ok()
+                .and_then(|p| Bean::from_file(&p).ok())
+                .and_then(|b| b.description.clone());
+
+            providers.push(DepProvider {
+                artifact: required.clone(),
+                bean_id: entry.id.clone(),
+                bean_title: entry.title.clone(),
+                status: format!("{}", entry.status),
+                description: desc,
+            });
+        }
+    }
+
+    providers
+}
+
+/// Format dependency providers into a section for the context output.
+fn format_dependency_section(providers: &[DepProvider]) -> Option<String> {
+    if providers.is_empty() {
+        return None;
+    }
+
+    let mut s = String::new();
+    s.push_str("═══ DEPENDENCY CONTEXT ══════════════════════════════════════\n");
+
+    for p in providers {
+        s.push_str(&format!(
+            "Bean {} ({}) produces `{}` [{}]\n",
+            p.bean_id, p.bean_title, p.artifact, p.status
+        ));
+        if let Some(ref desc) = p.description {
+            let preview: String = desc.chars().take(500).collect();
+            s.push_str(&format!("{}\n", preview));
+            if desc.len() > 500 {
+                s.push_str("...\n");
+            }
+        }
+        s.push('\n');
+    }
+
+    s.push_str("═════════════════════════════════════════════════════════════\n\n");
+    Some(s)
+}
+
+// ─── Path merging ────────────────────────────────────────────────────────────
+
+/// Merge explicit `bean.paths` with paths regex-extracted from the description.
+/// Explicit paths come first, then regex-extracted paths fill gaps.
+/// Deduplicates by path string.
+fn merge_paths(bean: &Bean) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+
+    for p in &bean.paths {
+        if seen.insert(p.clone()) {
+            result.push(p.clone());
+        }
+    }
+
+    let description = bean.description.as_deref().unwrap_or("");
+    for p in extract_paths(description) {
+        if seen.insert(p.clone()) {
+            result.push(p);
+        }
+    }
+
+    result
+}
+
 // ─── Command ─────────────────────────────────────────────────────────────────
 
-/// Assemble context for a bean from its description and referenced files.
+/// Assemble complete agent context for a bean — the single source of truth.
 ///
-/// Extracts file paths mentioned in the bean's description and outputs
-/// the content of those files in a markdown format suitable for LLM prompts.
-/// If a `.beans/RULES.md` file exists, its contents are prepended as a
-/// "Project Rules" section before the bean-specific context.
+/// Outputs everything an agent needs to implement this bean:
+/// 1. Bean spec — ID, title, verify, priority, status, description, acceptance
+/// 2. Previous attempts — what was tried and failed
+/// 3. Project rules — conventions from RULES.md
+/// 4. Dependency context — sibling beans that produce required artifacts
+/// 5. File structure — function signatures and imports
+/// 6. File contents — full source of referenced files
 ///
-/// When `structure_only` is true, only the structural summary (signatures,
-/// imports) is emitted — full file contents are skipped.
+/// File paths are merged from explicit `bean.paths` field (priority) and
+/// regex-extracted paths from the description (fills gaps).
+///
+/// When `structure_only` is true, only structural summaries are emitted.
 pub fn cmd_context(beans_dir: &Path, id: &str, json: bool, structure_only: bool) -> Result<()> {
     let bean_path =
         find_bean_file(beans_dir, id).context(format!("Could not find bean with ID: {}", id))?;
@@ -306,61 +454,34 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool, structure_only: bool)
         bean_path.display()
     ))?;
 
-    // Get the project directory (parent of beans_dir which is .beans)
     let project_dir = beans_dir
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Invalid .beans/ path: {}", beans_dir.display()))?;
 
-    // Extract file paths from the bean description
-    let description = bean.description.as_deref().unwrap_or("");
-    let paths = extract_paths(description);
+    // Merge explicit paths with regex-extracted paths from description
+    let paths = merge_paths(&bean);
 
-    // Load project rules (silently skipped if missing/empty)
+    // Load supplementary context
     let rules = load_rules(beans_dir);
+    let attempt_notes = format_attempt_notes_section(&bean);
+    let dep_providers = resolve_dependency_context(beans_dir, &bean);
 
-    // Build attempt notes section (used in both text and JSON modes)
-    let attempt_notes_section = format_attempt_notes_section(&bean);
-
-    if paths.is_empty() {
-        if json {
-            let mut obj = serde_json::json!({"id": id, "files": []});
-            if let Some(ref rules_content) = rules {
-                obj["rules"] = serde_json::Value::String(rules_content.clone());
-            }
-            if let Some(ref notes) = attempt_notes_section {
-                obj["attempt_notes"] = serde_json::Value::String(notes.clone());
-            }
-            println!("{}", obj);
-        } else {
-            // Still output rules even if no files referenced
-            if let Some(ref rules_content) = rules {
-                print!("{}", format_rules_section(rules_content));
-            }
-            if let Some(ref notes) = attempt_notes_section {
-                print!("{}", notes);
-            }
-            eprintln!("No file paths found in bean description.");
-            eprintln!("Tip: Reference files in description with paths like 'src/foo.rs' or 'src/commands/bar.rs'");
-        }
-        return Ok(());
-    }
-
-    // Read file contents and extract structure for all referenced paths.
-    // We do this upfront so both JSON and text modes share the same data.
+    // Read file contents and extract structure
     struct FileEntry {
         path: String,
         content: Option<String>,
         structure: Option<String>,
     }
 
-    let canonical_base = project_dir.canonicalize().context("Cannot canonicalize project dir")?;
+    let canonical_base = project_dir
+        .canonicalize()
+        .context("Cannot canonicalize project dir")?;
 
     let mut entries: Vec<FileEntry> = Vec::new();
     for path_str in &paths {
         let full_path = project_dir.join(path_str);
         let canonical = full_path.canonicalize().ok();
 
-        // Security: reject paths that escape the project directory
         let in_bounds = canonical
             .as_ref()
             .map(|c| c.starts_with(&canonical_base))
@@ -388,52 +509,87 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool, structure_only: bool)
     }
 
     if json {
-        // Output as JSON: array of {path, content, structure} objects
-        let mut files = Vec::new();
-        for entry in &entries {
-            let exists = entry.content.is_some();
-            let content_val = entry
-                .content
-                .as_deref()
-                .unwrap_or("(not found)")
-                .to_string();
-            let mut file_obj = serde_json::json!({
-                "path": entry.path,
-                "exists": exists,
-            });
-            if !structure_only {
-                file_obj["content"] = serde_json::Value::String(content_val);
-            }
-            if let Some(ref s) = entry.structure {
-                file_obj["structure"] = serde_json::Value::String(s.clone());
-            }
-            files.push(file_obj);
-        }
+        let files: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|entry| {
+                let exists = entry.content.is_some();
+                let mut file_obj = serde_json::json!({
+                    "path": entry.path,
+                    "exists": exists,
+                });
+                if !structure_only {
+                    file_obj["content"] = serde_json::Value::String(
+                        entry
+                            .content
+                            .as_deref()
+                            .unwrap_or("(not found)")
+                            .to_string(),
+                    );
+                }
+                if let Some(ref s) = entry.structure {
+                    file_obj["structure"] = serde_json::Value::String(s.clone());
+                }
+                file_obj
+            })
+            .collect();
+
+        let dep_json: Vec<serde_json::Value> = dep_providers
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "artifact": p.artifact,
+                    "bean_id": p.bean_id,
+                    "title": p.bean_title,
+                    "status": p.status,
+                    "description": p.description,
+                })
+            })
+            .collect();
+
         let mut obj = serde_json::json!({
-            "id": id,
+            "id": bean.id,
+            "title": bean.title,
+            "priority": bean.priority,
+            "status": format!("{}", bean.status),
+            "verify": bean.verify,
+            "description": bean.description,
+            "acceptance": bean.acceptance,
+            "produces": bean.produces,
+            "requires": bean.requires,
+            "dependencies": bean.dependencies,
+            "parent": bean.parent,
             "files": files,
+            "dependency_context": dep_json,
         });
         if let Some(ref rules_content) = rules {
             obj["rules"] = serde_json::Value::String(rules_content.clone());
         }
-        if let Some(ref notes) = attempt_notes_section {
+        if let Some(ref notes) = attempt_notes {
             obj["attempt_notes"] = serde_json::Value::String(notes.clone());
         }
         println!("{}", serde_json::to_string_pretty(&obj)?);
     } else {
         let mut output = String::new();
 
-        // Prepend project rules if available
+        // 1. Bean spec — the most important section
+        output.push_str(&format_bean_spec_section(&bean));
+
+        // 2. Previous attempts — what was tried and failed
+        if let Some(ref notes) = attempt_notes {
+            output.push_str(notes);
+        }
+
+        // 3. Project rules
         if let Some(ref rules_content) = rules {
             output.push_str(&format_rules_section(rules_content));
         }
 
-        // Prepend previous attempt notes if any exist
-        if let Some(ref notes) = attempt_notes_section {
-            output.push_str(notes);
+        // 4. Dependency context
+        if let Some(dep_section) = format_dependency_section(&dep_providers) {
+            output.push_str(&dep_section);
         }
 
-        // Build and emit structural summaries (before full file contents)
+        // 5. Structural summaries
         let structure_pairs: Vec<(&str, String)> = entries
             .iter()
             .filter_map(|e| {
@@ -447,21 +603,21 @@ pub fn cmd_context(beans_dir: &Path, id: &str, json: bool, structure_only: bool)
             output.push_str(&structure_block);
         }
 
-        // Emit full file contents unless --structure-only was requested
+        // 6. Full file contents (unless --structure-only)
         if !structure_only {
             let file_paths: Vec<String> = paths.clone();
-            let context =
-                assemble_context(file_paths, project_dir).context("Failed to assemble context")?;
-            output.push_str(&context);
+            if !file_paths.is_empty() {
+                let context = assemble_context(file_paths, project_dir)
+                    .context("Failed to assemble context")?;
+                output.push_str(&context);
+            }
         }
 
-        // Output the assembled markdown to stdout
         print!("{}", output);
     }
 
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,11 +680,7 @@ mod tests {
     fn load_rules_returns_none_when_file_missing() {
         let (_dir, beans_dir) = setup_test_env();
         // Write a minimal config so Config::load succeeds
-        fs::write(
-            beans_dir.join("config.yaml"),
-            "project: test\nnext_id: 1\n",
-        )
-        .unwrap();
+        fs::write(beans_dir.join("config.yaml"), "project: test\nnext_id: 1\n").unwrap();
 
         let result = load_rules(&beans_dir);
         assert!(result.is_none());
@@ -537,11 +689,7 @@ mod tests {
     #[test]
     fn load_rules_returns_none_when_file_empty() {
         let (_dir, beans_dir) = setup_test_env();
-        fs::write(
-            beans_dir.join("config.yaml"),
-            "project: test\nnext_id: 1\n",
-        )
-        .unwrap();
+        fs::write(beans_dir.join("config.yaml"), "project: test\nnext_id: 1\n").unwrap();
         fs::write(beans_dir.join("RULES.md"), "   \n\n  ").unwrap();
 
         let result = load_rules(&beans_dir);
@@ -551,11 +699,7 @@ mod tests {
     #[test]
     fn load_rules_returns_content_when_present() {
         let (_dir, beans_dir) = setup_test_env();
-        fs::write(
-            beans_dir.join("config.yaml"),
-            "project: test\nnext_id: 1\n",
-        )
-        .unwrap();
+        fs::write(beans_dir.join("config.yaml"), "project: test\nnext_id: 1\n").unwrap();
         fs::write(beans_dir.join("RULES.md"), "# My Rules\nNo unwrap.\n").unwrap();
 
         let result = load_rules(&beans_dir);
@@ -583,7 +727,9 @@ mod tests {
         let output = format_rules_section("# Rules\nBe nice.\n");
         assert!(output.starts_with("═══ PROJECT RULES"));
         assert!(output.contains("# Rules\nBe nice."));
-        assert!(output.ends_with("═════════════════════════════════════════════════════════════\n\n"));
+        assert!(
+            output.ends_with("═════════════════════════════════════════════════════════════\n\n")
+        );
     }
 
     // --- attempt notes tests ---
@@ -640,13 +786,22 @@ mod tests {
     fn format_attempt_notes_includes_attempt_log_notes() {
         let bean = make_bean_with_attempts();
         let result = format_attempt_notes_section(&bean).expect("should produce output");
-        assert!(result.contains("Previous Attempts"), "should have section header");
+        assert!(
+            result.contains("Previous Attempts"),
+            "should have section header"
+        );
         assert!(result.contains("Attempt #1"), "should include attempt 1");
         assert!(result.contains("pi-agent"), "should include agent name");
         assert!(result.contains("abandoned"), "should include outcome");
-        assert!(result.contains("Tried X, hit bug Y"), "should include notes text");
+        assert!(
+            result.contains("Tried X, hit bug Y"),
+            "should include notes text"
+        );
         assert!(result.contains("Attempt #2"), "should include attempt 2");
-        assert!(result.contains("Fixed Y, now Z fails"), "should include attempt 2 notes");
+        assert!(
+            result.contains("Fixed Y, now Z fails"),
+            "should include attempt 2 notes"
+        );
     }
 
     #[test]
@@ -672,7 +827,10 @@ mod tests {
             finished_at: None,
         }];
         let result = format_attempt_notes_section(&bean);
-        assert!(result.is_none(), "whitespace-only notes should produce no output");
+        assert!(
+            result.is_none(),
+            "whitespace-only notes should produce no output"
+        );
     }
 
     #[test]

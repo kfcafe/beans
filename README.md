@@ -17,7 +17,7 @@ bn create "Fix unicode bug" --verify "pytest test_unicode.py"
 # Then passes after implementation → bean closes
 ```
 
-No databases. No daemons. Just `.beans/` files you can `cat`, `grep`, and `git diff`.
+Plain markdown files. No SDK, no API — any agent that can read files and run shell commands already speaks beans.
 
 ## Table of Contents
 
@@ -55,7 +55,7 @@ cargo install beans-cli
 <summary>Build from source</summary>
 
 ```bash
-git clone https://github.com/opus-workshop/beans && cd beans
+git clone https://github.com/kfcafe/beans && cd beans
 cargo build --release
 cp target/release/bn ~/.local/bin/
 ```
@@ -66,7 +66,7 @@ cp target/release/bn ~/.local/bin/
 
 ```bash
 bn init                                              # Create .beans/ directory
-bn quick "Fix auth bug" --verify "cargo test auth"   # Create + claim task
+bn quick "Fix auth bug" --verify "npm test auth"     # Create + claim task
 bn status                                            # See what's claimed/ready/blocked
 bn close 1                                           # Run verify, close if passes
 ```
@@ -83,7 +83,7 @@ bn logs 3                                            # View agent output for bea
 Capture project knowledge:
 
 ```bash
-bn fact "API uses Axum 0.8" --verify "grep -q 'axum = \"0.8' Cargo.toml"
+bn fact "API uses Express 5" --verify "grep -q '\"express\": \"5' package.json"
 bn context                                           # Memory context: stale facts, in-progress, recent work
 bn recall "auth"                                     # Search across all beans
 ```
@@ -102,7 +102,7 @@ bn recall "auth"                                     # Search across all beans
 - **Interactive wizard** — `bn create` with no args launches a step-by-step prompt (fuzzy parent search, smart verify suggestions, $EDITOR for descriptions)
 - **Pipe-friendly** — `--json` output, `--ids` listing, `--description -` reads stdin, `--stdin` for batch operations
 - **Smart selectors** — `@latest` for chaining sequential beans
-- **Context assembly** — extracts file paths from descriptions for cold-start context
+- **Context assembly** — `bn context <id>` outputs a complete agent briefing: bean spec, verify command, previous attempts, project rules, dependency context, and referenced file contents
 - **Trace** — `bn trace` walks bean lineage, dependencies, artifacts, and attempt history
 - **Dependency graph** — ASCII, Mermaid, DOT output
 - **Full lifecycle** — create, claim, close, reopen, delete, adopt, archive, unarchive, tidy
@@ -223,13 +223,13 @@ Output is truncated to first 50 + last 50 lines to keep beans readable while pre
 Parent-child via dot notation:
 
 ```bash
-bn create "Auth system" --verify "cargo test auth"
+bn create "Auth system" --verify "make test-auth"
 #> Created: 1
 
-bn create "Login endpoint" --parent 1 --verify "cargo test auth::login"
+bn create "Login endpoint" --parent 1 --verify "curl -sf localhost:3000/login -d '{\"user\":\"test\"}'"
 #> Created: 1.1
 
-bn create "Token refresh" --parent 1 --verify "cargo test auth::refresh"
+bn create "Token refresh" --parent 1 --verify "pytest tests/test_refresh.py"
 #> Created: 1.2
 
 bn tree 1
@@ -245,23 +245,25 @@ Dependencies auto-infer from `produces`/`requires`:
 ```bash
 bn create "Define auth types" --parent 1 \
   --produces "AuthProvider,AuthConfig" \
-  --verify "cargo build"
+  --verify "tsc --noEmit src/auth/types.ts"
 
 bn create "Implement JWT" --parent 1 \
   --requires "AuthProvider" \
-  --verify "cargo test jwt"
+  --verify "node --test test/jwt.test.js"
 ```
 
 When the JWT bean requires `AuthProvider` and the auth types bean produces it, JWT is automatically blocked until auth types closes. No explicit `bn dep add` needed.
 
 ```bash
-bn ready
-#> P2  1.1  Define auth types      # ready (no requires)
+bn status
+#> ## Ready (1)
+#>   1.1 [ ] Define auth types     # ready (no requires)
 
 bn close 1.1
 
-bn ready
-#> P2  1.2  Implement JWT          # now ready (producer closed)
+bn status
+#> ## Ready (1)
+#>   1.2 [ ] Implement JWT         # now ready (producer closed)
 ```
 
 Children can be created in any order without manual dependency wiring.
@@ -289,7 +291,7 @@ Creating a new bean
 
 ? Title › fix auth timeout
 ✔ Parent (type to filter) › 3 — Auth system
-✔ Verify command (empty to skip) · cargo test auth::timeout
+✔ Verify command (empty to skip) · pytest tests/test_auth_timeout.py
 ✔ Acceptance criteria (empty to skip) · Timeout returns 408, not 500
 ✔ Priority · P1 (high)
 ✔ Open editor for description? · no
@@ -375,7 +377,7 @@ bn list --ids | bn close --stdin --force
 bn list --json | jq -r '.[] | select(.title | test("test:")) | .id' | bn close --stdin --force
 
 # Create → immediately claim
-bn create "task" --verify "test" -p --json | jq -r '.id' | xargs bn claim
+bn create "task" --verify "make check" -p --json | jq -r '.id' | xargs bn claim
 ```
 
 ### Composable pipelines
@@ -419,8 +421,6 @@ bn logs <id>                        # View agent output for a bean
 
 # Querying
 bn status                           # Overview: claimed, ready, blocked
-bn ready                            # Tasks with no blockers
-bn blocked                          # Tasks waiting on dependencies
 bn tree                             # Hierarchy view
 bn show <id>                        # Full task details
 bn list                             # List with filters
@@ -431,11 +431,11 @@ bn recall "query"                   # Search beans by keyword
 bn fact "title" --verify "cmd"      # Create a verified fact
 bn verify-facts                     # Re-verify all facts, detect staleness
 bn context                          # Memory context (stale facts, in-progress, recent)
-bn context <id>                     # File context for a specific bean
+bn context <id>                     # Complete agent context for a bean
 
 # Dependencies
 bn dep add <id> <dep-id>            # Add explicit dependency
-bn dep tree <id>                    # Full dependency tree
+bn graph                            # Dependency graph (ASCII, Mermaid, DOT)
 
 # MCP
 bn mcp serve                        # Start MCP server for IDE integration
@@ -457,7 +457,7 @@ bn completions <shell>              # Generate shell completions
 | `bn init` | Initialize `.beans/` in current directory |
 | `bn init --agent <preset>` | Initialize with agent preset (pi, claude, aider) |
 | `bn init --setup` | Reconfigure agent on existing project |
-| `bn create "title"` | Create a bean (`--json` for piped output) |
+| `bn create "title"` | Create a bean (`--json` for piped output, `--paths` for file refs) |
 | `bn create` | Interactive wizard (auto-detects TTY) |
 | `bn create -i` | Force interactive mode with any flags |
 | `bn create next "title"` | Create bean depending on the last created bean |
@@ -474,10 +474,8 @@ bn completions <shell>              # Generate shell completions
 | `bn reopen <id>` | Reopen a closed bean |
 | `bn delete <id>` | Delete a bean |
 | **Querying** | |
-| `bn status` | Overview |
-| `bn ready` | Beans with no blockers |
-| `bn blocked` | Beans blocked by deps |
-| `bn context [id]` | File context (with ID) or memory context (without) |
+| `bn status` | Overview: claimed, ready, goals, blocked |
+| `bn context [id]` | Complete agent context (with ID) or memory context (without) |
 | `bn context --structure-only` | Structural summary only (signatures, imports) |
 | `bn tree` | View hierarchy |
 | `bn graph` | Dependency graph (ASCII, Mermaid, DOT) |
@@ -501,7 +499,7 @@ bn completions <shell>              # Generate shell completions
 | **MCP** | |
 | `bn mcp serve` | Start MCP server (JSON-RPC 2.0 on stdio) |
 | **Dependencies** | |
-| `bn dep add/remove/list/tree/cycles` | Dependency management |
+| `bn dep add/remove/list` | Dependency management |
 | **Housekeeping** | |
 | `bn adopt <parent> <children>` | Adopt beans as children |
 | `bn stats` | Project statistics |
@@ -578,8 +576,8 @@ bn logs 3                 # View agent output for bean 3
 While working on your main task, create beans for everything you notice — `bn run` picks them up automatically:
 
 ```bash
-bn create "bug: nil panic in logger" --verify "cargo test logger"
-bn create "test: no coverage for cache" --verify "cargo test cache"
+bn create "bug: nil panic in logger" --verify "go test ./pkg/logger/..."
+bn create "test: no coverage for cache" --verify "pytest tests/test_cache.py"
 bn create "docs: stale API examples" --verify "grep -q 'v2' README.md"
 ```
 
@@ -588,8 +586,8 @@ bn create "docs: stale API examples" --verify "grep -q 'v2' README.md"
 Control what happens when a verify command fails:
 
 ```bash
-bn create "fix bug" --verify "cargo test" --on-fail "retry:3"       # Retry up to 3 times
-bn create "critical" --verify "cargo test" --on-fail "escalate:P0"  # Escalate priority on failure
+bn create "fix bug" --verify "npm test" --on-fail "retry:3"         # Retry up to 3 times
+bn create "critical" --verify "make ci" --on-fail "escalate:P0"     # Escalate priority on failure
 ```
 
 An agent can also explicitly give up:
@@ -631,12 +629,13 @@ Agents are spawned with the configured `run` command. Each agent reads the bean,
 Agents can also claim and work beans directly:
 
 ```bash
-bn ready                  # Find available work
-#> P1  3   Implement token refresh
-#> P2  7   Add rate limiting
+bn status                 # Find available work
+#> ## Ready (2)
+#>   3 [ ] Implement token refresh
+#>   7 [ ] Add rate limiting
 
 bn claim 3                # Atomically claim (only one agent wins)
-cat .beans/3-*.md         # Read full task spec
+bn context 3              # Read full task spec + file contents
 
 # ... implement the feature ...
 
@@ -662,8 +661,8 @@ Facts are verified truths about your project that persist across agent sessions.
 ### Creating facts
 
 ```bash
-bn fact "API uses Axum 0.8" --verify "grep -q 'axum = \"0.8' Cargo.toml"
-bn fact "Auth tokens expire after 24h" --verify "grep -q '24 * 60' src/config.rs"
+bn fact "API uses Express 5" --verify "grep -q '\"express\": \"5' package.json"
+bn fact "Auth tokens expire after 24h" --verify "grep -q 'TOKEN_TTL=86400' .env.example"
 bn fact "Tests require Docker" --verify "docker info >/dev/null 2>&1" --ttl 90
 ```
 
@@ -680,20 +679,31 @@ bn verify-facts           # Re-run all fact verify commands, flag stale ones
 bn context                # Memory context includes stale facts automatically
 ```
 
-### Memory context
+### Context
 
-`bn context` without an ID outputs memory context — everything an agent needs to understand the current project state:
+`bn context <id>` outputs the complete agent briefing — everything needed to implement a bean:
+
+```bash
+bn context 5              # Complete context: spec, attempts, rules, deps, files
+bn context 5 --structure-only  # Signatures and imports only (skip file contents)
+bn context 5 --json       # Machine-readable
+```
+
+The output includes (in order):
+1. **Bean spec** — ID, title, verify command, priority, status, description, acceptance criteria
+2. **Previous attempts** — what was tried and why it failed
+3. **Project rules** — conventions from `.beans/RULES.md`
+4. **Dependency context** — descriptions of sibling beans that produce artifacts this bean requires
+5. **File structure** — function signatures and imports
+6. **File contents** — full source of referenced files
+
+File paths come from two sources: the bean's explicit `paths` field (set via `--paths` on create) and paths regex-extracted from the description text. Explicit paths take priority.
+
+Without an ID, outputs memory context — project-wide state for orientation:
 
 ```bash
 bn context                # Stale facts, currently claimed beans, recent completions
 bn context --json         # Machine-readable
-```
-
-With an ID, it extracts file contents referenced in the bean's description:
-
-```bash
-bn context 5              # Files referenced in bean 5
-bn context 5 --structure-only  # Signatures and imports only (smaller output)
 ```
 
 ### Searching
@@ -817,7 +827,7 @@ Inspired by Steve Yegge's [beads](https://github.com/steveyegge/beads) — beans
 
 ## Design Principles
 
-1. **Files are the source of truth.** The index is a cache. You can always `cat .beans/*.md`.
+1. **Files are the source of truth.** The index is a cache. `bn show`, `bn list`, or read the files directly.
 2. **Verify gates are the default.** If you can't prove it's done, it's not done. (`--force` exists as an escape hatch.)
 3. **Fail-then-pass.** Tests must fail before work starts, pass after. No `assert True`.
 4. **Failures accumulate.** Each failed attempt appends to the bean. Next agent sees full history.
@@ -836,11 +846,11 @@ Every bean has a `verify` command — a test that **must fail** when you create 
 
 No more `assert True`. No more lost context. No more ambiguity. The verify command is the contract. Hit it and you're done. Miss it and you're not.
 
-Tasks are just markdown files. `cat .beans/3-*.md`. No API, no auth, no waiting.
+Tasks are just markdown files. `bn show 3`. No API, no auth, no waiting.
 
 ## Documentation
 
-- [Agent Skill](docs/SKILL.md) — Full reference for AI agents using beans (workflows, issue discovery, context assembly, smart deps)
+- [Agent Skill](docs/SKILL.md) — Quick reference for AI agents using beans
 - [Best Practices](docs/BEST_PRACTICES.md) — Writing effective beans for agents
 - `bn --help` — Full command reference
 

@@ -350,11 +350,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -392,11 +392,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -430,11 +430,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -467,11 +467,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -577,7 +577,10 @@ mod tests {
         let updated = Bean::from_file(beans_dir.join("1.yaml")).unwrap();
         assert_eq!(updated.status, Status::InProgress);
         assert_eq!(updated.claimed_by, Some("alice".to_string()));
-        assert!(updated.fail_first, "fail_first should be set when verify fails at claim time");
+        assert!(
+            updated.fail_first,
+            "fail_first should be set when verify fails at claim time"
+        );
     }
 
     #[test]
@@ -633,10 +636,16 @@ mod tests {
         assert!(result.is_ok());
 
         let updated = Bean::from_file(beans_dir.join("1.yaml")).unwrap();
-        assert!(updated.checkpoint.is_some(), "checkpoint SHA should be stored");
+        assert!(
+            updated.checkpoint.is_some(),
+            "checkpoint SHA should be stored"
+        );
         let sha = updated.checkpoint.unwrap();
         assert_eq!(sha.len(), 40, "SHA should be 40 hex chars, got: {}", sha);
-        assert!(sha.chars().all(|c| c.is_ascii_hexdigit()), "SHA should be hex");
+        assert!(
+            sha.chars().all(|c| c.is_ascii_hexdigit()),
+            "SHA should be hex"
+        );
     }
 
     #[test]
@@ -652,7 +661,10 @@ mod tests {
 
         let updated = Bean::from_file(beans_dir.join("1.yaml")).unwrap();
         assert_eq!(updated.status, Status::InProgress);
-        assert!(!updated.fail_first, "fail_first should not be set without verify");
+        assert!(
+            !updated.fail_first,
+            "fail_first should not be set without verify"
+        );
         assert!(updated.checkpoint.is_none(), "no checkpoint without verify");
     }
 

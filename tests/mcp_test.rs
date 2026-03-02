@@ -36,9 +36,7 @@ fn setup_mcp_env() -> (TempDir, std::path::PathBuf) {
     bean1.slug = Some("fix-login-bug".to_string());
     bean1.verify = Some("echo pass".to_string());
     bean1.description = Some("Fix the login authentication flow".to_string());
-    bean1
-        .to_file(beans_dir.join("1-fix-login-bug.md"))
-        .unwrap();
+    bean1.to_file(beans_dir.join("1-fix-login-bug.md")).unwrap();
 
     // Bean 2: open, depends on 1
     let mut bean2 = Bean::new("2", "Add tests for login");

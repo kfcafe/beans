@@ -256,6 +256,7 @@ pub fn interactive_create(beans_dir: &Path, prefill: Prefill) -> Result<CreateAr
         parent,
         produces,
         requires,
+        paths: None,
         on_fail: None,
         pass_ok,
         claim: false,

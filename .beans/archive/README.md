@@ -33,7 +33,7 @@ To see what work is in progress or planned:
 ```bash
 bn list              # Show all beans
 bn list --tree       # Show hierarchical view
-bn ready             # Show beans ready to work on (no blocking dependencies)
+bn status            # Show claimed, ready, goals, and blocked beans
 bn show 1            # Show detailed view of bean 1
 ```
 
@@ -49,7 +49,7 @@ less .beans/index.yaml  # Auto-built index of all beans
 Beans have dependencies — some work blocks other work. View the dependency structure:
 
 ```bash
-bn dep tree          # Show dependency tree
+bn graph             # Show dependency graph (ASCII)
 bn graph --format mermaid  # Export as Mermaid diagram
 ```
 
@@ -76,7 +76,7 @@ bn close 1           # Run bean 1's verify command
 
 When working on this project:
 
-1. Check `bn ready` to see work with no blockers
+1. Check `bn status` to see work with no blockers
 2. Create a new bean with `bn create "your feature"`
 3. Decompose complex work into child beans
 4. Add dependencies with `bn dep add <id> <blocker>`

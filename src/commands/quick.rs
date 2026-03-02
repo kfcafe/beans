@@ -225,11 +225,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -253,8 +253,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: true,
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
 
         cmd_quick(&beans_dir, args).unwrap();
 
@@ -288,8 +288,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: true,
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
 
         cmd_quick(&beans_dir, args).unwrap();
 
@@ -317,8 +317,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: true,
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
 
         let result = cmd_quick(&beans_dir, args);
         assert!(result.is_err());
@@ -344,8 +344,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: true,
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
         cmd_quick(&beans_dir, args1).unwrap();
 
         // Create second bean
@@ -362,8 +362,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: true,
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
         cmd_quick(&beans_dir, args2).unwrap();
 
         // Verify both exist with correct IDs
@@ -390,8 +390,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: true,
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
 
         cmd_quick(&beans_dir, args).unwrap();
 
@@ -420,8 +420,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: true,
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
 
         cmd_quick(&beans_dir, args).unwrap();
 
@@ -453,8 +453,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: false, // default: fail-first enforced
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
 
         let result = cmd_quick(&beans_dir, args);
         assert!(result.is_err());
@@ -479,8 +479,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: false, // default: fail-first enforced
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
 
         let result = cmd_quick(&beans_dir, args);
         assert!(result.is_ok());
@@ -511,8 +511,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: true,
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
 
         let result = cmd_quick(&beans_dir, args);
         assert!(result.is_ok());
@@ -543,8 +543,8 @@ mod tests {
             parent: None,
             on_fail: None,
             pass_ok: false,
-                    verify_timeout: None,
-};
+            verify_timeout: None,
+        };
 
         let result = cmd_quick(&beans_dir, args);
         assert!(result.is_ok());

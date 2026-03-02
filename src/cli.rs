@@ -26,8 +26,6 @@ Commands:
 
   QUERY
     status       Show project status: claimed, ready, and blocked beans
-    ready        Show beans ready to work on (no blocking dependencies)
-    blocked      Show beans blocked by unresolved dependencies
     tree         Show hierarchical tree of beans
     graph        Display dependency graph
     context      Output context for a bean, or memory context (no args)
@@ -375,22 +373,6 @@ Examples:
         command: DepCommand,
     },
     // -- QUERY --
-    /// Show beans ready to work on (no blocking dependencies)
-    #[command(display_order = 21)]
-    Ready {
-        /// JSON output
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Show beans blocked by unresolved dependencies
-    #[command(display_order = 22)]
-    Blocked {
-        /// JSON output
-        #[arg(long)]
-        json: bool,
-    },
-
     /// Show project status: claimed, ready, and blocked beans
     ///
     /// Quick overview of what's in flight, what's ready for dispatch, and what's
@@ -404,17 +386,24 @@ Examples:
 
     /// Output context for a bean, or memory context (no args)
     ///
-    /// With a bean ID: extracts and displays file contents referenced in the bean's
-    /// description. Without an ID: outputs memory context — stale facts, currently
-    /// claimed beans, and recent completions. Useful for agents to understand current
-    /// project state before starting work.
+    /// With a bean ID: outputs complete agent context — bean spec, verify command,
+    /// previous attempts, project rules, dependency context, and referenced file
+    /// contents. This is the single source of truth for an agent working on a bean.
+    ///
+    /// Without an ID: outputs memory context — stale facts, currently claimed beans,
+    /// and recent completions.
+    ///
+    /// File paths come from the bean's `paths` field (set via --paths on create) plus
+    /// any file paths mentioned in the description text (regex-extracted). Explicit
+    /// paths take priority.
     #[command(
         display_order = 25,
         after_help = "\
 Examples:
   bn context         Memory context (stale facts, in-progress, recent work)
-  bn context 5       File context for bean 5 (reads referenced files)
-  bn context --json  Machine-readable memory context"
+  bn context 5       Complete agent context for bean 5
+  bn context 5 --structure-only   Signatures only (skip file contents)
+  bn context 5 --json             Machine-readable output"
     )]
     Context {
         /// Bean ID (omit for memory context)
@@ -916,15 +905,6 @@ pub enum DepCommand {
         /// Bean ID
         id: String,
     },
-
-    /// Show full dependency tree
-    Tree {
-        /// Root bean ID (shows project-wide DAG if omitted)
-        id: Option<String>,
-    },
-
-    /// Detect dependency cycles in the graph
-    Cycles,
 }
 
 #[derive(Subcommand)]
@@ -1015,6 +995,10 @@ pub enum CreateSubcommand {
         #[arg(long)]
         requires: Option<String>,
 
+        /// Comma-separated file paths relevant to this bean (used by bn context)
+        #[arg(long)]
+        paths: Option<String>,
+
         /// Action on verify failure: retry, retry:N, escalate, escalate:P0
         #[arg(long)]
         on_fail: Option<String>,
@@ -1104,6 +1088,10 @@ pub struct CreateOpts {
     /// Comma-separated artifacts this bean requires
     #[arg(long)]
     pub requires: Option<String>,
+
+    /// Comma-separated file paths relevant to this bean (used by bn context)
+    #[arg(long)]
+    pub paths: Option<String>,
 
     /// Action on verify failure: retry, retry:N, escalate, escalate:P0
     #[arg(long)]

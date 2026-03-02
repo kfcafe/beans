@@ -30,6 +30,8 @@ pub struct CreateArgs {
     pub parent: Option<String>,
     pub produces: Option<String>,
     pub requires: Option<String>,
+    /// Comma-separated file paths relevant to this bean.
+    pub paths: Option<String>,
     /// Action on verify failure
     pub on_fail: Option<OnFailAction>,
     /// Skip fail-first check (allow verify to already pass)
@@ -277,6 +279,15 @@ pub fn cmd_create(beans_dir: &Path, args: CreateArgs) -> Result<String> {
             .collect();
     }
 
+    // Parse paths
+    if let Some(paths_str) = args.paths {
+        bean.paths = paths_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+
     // Set on_fail action
     if let Some(on_fail) = args.on_fail {
         bean.on_fail = Some(on_fail);
@@ -425,11 +436,11 @@ mod tests {
             extends: vec![],
             rules_file: None,
             file_locking: false,
-        on_close: None,
-        on_fail: None,
-        post_plan: None,
-        verify_timeout: None,
-        review: None,
+            on_close: None,
+            on_fail: None,
+            post_plan: None,
+            verify_timeout: None,
+            review: None,
         };
         config.save(&beans_dir).unwrap();
 
@@ -454,6 +465,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -492,6 +504,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -532,6 +545,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -555,6 +569,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -589,6 +604,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -612,6 +628,7 @@ mod tests {
             parent: Some("1".to_string()),
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -645,6 +662,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -669,12 +687,13 @@ mod tests {
                 parent: Some("1".to_string()),
                 produces: None,
                 requires: None,
+                paths: None,
                 on_fail: None,
                 pass_ok: true,
                 claim: false,
                 by: None,
-                            verify_timeout: None,
-};
+                verify_timeout: None,
+            };
             cmd_create(&beans_dir, child_args).unwrap();
         }
 
@@ -708,6 +727,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -747,6 +767,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -816,6 +837,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -851,12 +873,13 @@ mod tests {
                 parent: None,
                 produces: None,
                 requires: None,
+                paths: None,
                 on_fail: None,
                 pass_ok: true,
                 claim: false,
                 by: None,
-                            verify_timeout: None,
-};
+                verify_timeout: None,
+            };
 
             let result = cmd_create(&beans_dir, args);
             assert!(result.is_ok(), "Priority {} should be valid", priority);
@@ -898,6 +921,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -948,6 +972,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1016,6 +1041,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1069,6 +1095,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1120,6 +1147,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1160,6 +1188,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: false, // default: fail-first enforced
             claim: false,
@@ -1191,6 +1220,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: false, // default: fail-first enforced
             claim: false,
@@ -1228,6 +1258,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1265,6 +1296,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: false,
             claim: false,
@@ -1303,6 +1335,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: true,
@@ -1341,6 +1374,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: true,
@@ -1375,6 +1409,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1410,6 +1445,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1433,6 +1469,7 @@ mod tests {
             parent: Some("1".to_string()),
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: true,
@@ -1471,6 +1508,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: true,
@@ -1509,6 +1547,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: true,
@@ -1538,6 +1577,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: true,
@@ -1568,6 +1608,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1592,6 +1633,7 @@ mod tests {
             parent: Some("1".to_string()),
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: true,
@@ -1625,6 +1667,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1758,6 +1801,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1781,6 +1825,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1819,6 +1864,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1842,6 +1888,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1865,6 +1912,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1909,6 +1957,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1931,6 +1980,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1954,6 +2004,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,
@@ -1993,6 +2044,7 @@ mod tests {
             parent: None,
             produces: None,
             requires: None,
+            paths: None,
             on_fail: None,
             pass_ok: true,
             claim: false,

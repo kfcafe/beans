@@ -514,7 +514,10 @@ mod tests {
         // Verify the full title appears in format_node output
         let index = Index::load_or_rebuild(&beans_dir).unwrap();
         let node = format_node(&index.beans[0]);
-        assert!(node.contains(long_title), "Full title should appear in graph node");
+        assert!(
+            node.contains(long_title),
+            "Full title should appear in graph node"
+        );
     }
 
     #[test]
