@@ -102,7 +102,7 @@ bn recall "database"                                 # Search across all beans
 - **Parallel dispatch** — `bn run` finds ready beans and spawns agents in parallel (`-j 8` for 8 concurrent)
 - **Dependency-aware scheduling** — `produces`/`requires` auto-inference, beans unblock as predecessors close
 - **Loop mode** — `bn run --loop-mode` continuously re-dispatches as work completes and unblocks downstream
-- **Auto-planning** — `bn run --auto-plan` decomposes large beans into agent-sized children before dispatch
+- **Auto-planning** — `bn run --auto-plan` splits large beans into agent-sized subtasks before dispatch
 - **Adversarial review** — `bn run --review` spawns a second agent to verify correctness after close
 - **Agent-agnostic** — works with any CLI agent (Claude, pi, aider, custom scripts)
 - **Failure accumulation** — failed attempts append output to the bean, so the next agent sees what was tried
@@ -497,7 +497,7 @@ bn completions <shell>              # Generate shell completions
 | **Agents** | |
 | `bn run [id] [-j N]` | Dispatch ready beans to agents |
 | `bn run --loop-mode` | Keep running until no ready beans remain |
-| `bn run --auto-plan` | Auto-decompose large beans before dispatch |
+| `bn run --auto-plan` | Auto-split large beans into subtasks before dispatch |
 | `bn run --dry-run` | Preview dispatch plan without spawning |
 | `bn run --review` | Adversarial review after each close |
 | `bn run --json-stream` | Emit JSON events to stdout |
@@ -537,7 +537,7 @@ bn init --agent claude
 
 # Or set manually
 bn config set run "claude -p 'read bean {id}, implement it, then run bn close {id}'"
-bn config set plan "claude -p 'read bean {id} and decompose it into children using bn create'"
+bn config set plan "claude -p 'read bean {id} and split it into subtasks using bn create'"
 ```
 
 `{id}` is replaced with the bean ID. The spawned agent should read the bean, do the work, and run `bn close`.
@@ -549,10 +549,10 @@ bn run                    # Dispatch all ready beans to agents
 bn run 3                  # Dispatch a specific bean
 bn run -j 8              # Up to 8 parallel agents
 bn run --dry-run          # Preview what would be dispatched
-bn run --auto-plan        # Auto-decompose large beans before dispatch
+bn run --auto-plan        # Auto-split large beans into subtasks before dispatch
 ```
 
-`bn run` finds ready beans, sizes them, and spawns agents. Small beans get implemented directly. Large beans (exceeding `max_tokens`) are sent to the plan command for decomposition — or handled automatically with `--auto-plan`.
+`bn run` finds ready beans, sizes them, and spawns agents. Small beans get implemented directly. Large beans (exceeding `max_tokens`) are sent to the plan command to be split into subtasks — or handled automatically with `--auto-plan`.
 
 ### Loop mode
 
@@ -567,7 +567,7 @@ bn run --loop-mode -j 8 --timeout 60  # High-throughput mode
 ### Planning large tasks
 
 ```bash
-bn plan 3                 # Interactively decompose bean 3 into children
+bn plan 3                 # Interactively split bean 3 into subtasks
 bn plan --auto            # Autonomous planning (no prompts)
 bn plan --strategy layer  # Suggest a split strategy (layer, feature, phase, file)
 bn plan --dry-run         # Preview split without creating children
@@ -764,7 +764,7 @@ Agent orchestration and project settings are configured via `bn config`:
 
 ```bash
 bn config set run "claude -p 'read bean {id}, implement it, then run bn close {id}'"
-bn config set plan "claude -p 'read bean {id} and decompose it into children using bn create'"
+bn config set plan "claude -p 'read bean {id} and split it into subtasks using bn create'"
 bn config set max_concurrent 4
 bn config set poll_interval 30
 ```
@@ -772,7 +772,7 @@ bn config set poll_interval 30
 | Key | Default | Description |
 |-----|---------|-------------|
 | `run` | *(none)* | Command template to implement a bean. `{id}` is replaced with the bean ID. |
-| `plan` | *(none)* | Command template to decompose a large bean into children. |
+| `plan` | *(none)* | Command template to split a large bean into subtasks. |
 | `max_concurrent` | `4` | Maximum number of agents running in parallel. |
 | `max_tokens` | `30000` | Maximum tokens for bean context (triggers planning if exceeded). |
 | `max_loops` | `10` | Maximum agent loops before stopping (0 = unlimited). |
@@ -824,16 +824,20 @@ bn completions powershell >> $PROFILE
 
 ## Why Not X?
 
-| | beans | [beads](https://github.com/steveyegge/beads) | Jira/Linear | GitHub Issues |
-|---|---|---|---|---|
-| **Designed for** | AI agents | AI agents | Humans | Humans |
-| **Agent dispatch** | ✓ Built-in (`bn run`) | ✗ External | ✗ External | ✗ External |
-| **Dependency scheduling** | ✓ Auto-inferred | ✗ Manual | ✓ Manual | ✗ None |
-| **Verify gates** | ✓ Enforced (fail-first) | ✗ Honor system | ✗ Honor system | ✗ Honor system |
-| **Failure context** | ✓ Accumulated | ✗ None | ✗ None | ✗ None |
-| **Storage** | Markdown files | JSONL + SQLite | Cloud DB | Cloud DB |
-| **Hierarchy** | `3.1` = child of `3` | Flat (hash IDs) | Epics/stories | Flat |
-| **Git-native** | ✓ In repo | External | External | Same platform |
+| | beans | [beads](https://github.com/steveyegge/beads) | [Maestro](https://github.com/RunMaestro/Maestro) | [Conductor](https://github.com/gemini-cli-extensions/conductor) | [Emdash](https://github.com/generalaction/emdash) |
+|---|---|---|---|---|---|
+| **What it is** | Task tracker + orchestrator | Agent memory/task tracker | Multi-agent orchestration app | Spec→Plan→Implement workflow | Multi-agent session manager |
+| **Verify gates** | ✓ Fail-first enforced | ✗ | ✗ | ✗ Manual prompts per phase | ✗ |
+| **Agent dispatch** | ✓ `bn run` (parallel) | ✗ | ✓ Auto Run (parallel) | ✓ `/implement` (sequential) | ✓ Parallel |
+| **Dependency scheduling** | ✓ Auto-inferred | ✓ Manual (4 types) | ✗ | ✗ | ✗ |
+| **Failure accumulation** | ✓ Per-attempt history | ✗ | ✗ | ✗ | ✗ |
+| **Worktree isolation** | ✗ | ✗ | ✓ Per task | ✗ | ✓ Per task |
+| **PR/GitHub integration** | ✗ | ✗ | ✓ | ✗ | ✓ Diff, create, line comments |
+| **Spec/plan artifacts** | ~ `bn plan` generates subtasks | ✗ | ✗ | ✓ spec.md + plan.md in git | ✗ |
+| **Memory compaction** | ✗ | ✓ AI-assisted (70–95%) | ✗ | ✗ | ✗ |
+| **Visual monitoring** | ✗ CLI only | ✗ CLI only | ✓ Real-time GUI | ✗ CLI only | ✓ Real-time GUI |
+| **Agent support** | Any CLI agent | Any CLI agent | Claude/Codex/OpenCode/Droid | Gemini only | 8+ CLIs |
+| **Storage** | Markdown (git) | JSONL + SQLite (git) | SQLite (local) | Markdown (git) | SQLite (local) |
 
 Inspired by Steve Yegge's [beads](https://github.com/steveyegge/beads) — beans trades scale for simplicity and enforced verification.
 

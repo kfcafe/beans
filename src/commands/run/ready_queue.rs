@@ -18,7 +18,7 @@ use crate::util::natural_cmp;
 
 use super::plan::SizedBean;
 use super::wave::compute_waves;
-use super::AgentResult;
+use super::{format_duration, AgentResult};
 
 /// Check if all dependencies of an index entry are closed.
 ///
@@ -174,6 +174,8 @@ pub(super) fn run_ready_queue_direct(
                     attempt: None,
                     priority: None,
                 });
+            } else {
+                eprintln!("  ▸ {}  {}", sb.id, sb.title);
             }
 
             let beans_dir = beans_dir.to_path_buf();
@@ -227,6 +229,22 @@ pub(super) fn run_ready_queue_direct(
             let success = result.success;
             let bean_id = result.id.clone();
 
+            // Print real-time completion for CLI users
+            if !json_stream {
+                let duration = format_duration(result.duration);
+                if success {
+                    eprintln!(
+                        "  ✓ {}  {}  {}  {}",
+                        result.id, result.title, result.action, duration
+                    );
+                } else {
+                    eprintln!(
+                        "  ✗ {}  {}  {}  {} (failed)",
+                        result.id, result.title, result.action, duration
+                    );
+                }
+            }
+
             if success {
                 completed.insert(bean_id.clone());
             } else {
@@ -238,6 +256,20 @@ pub(super) fn run_ready_queue_direct(
                     while running_count > 0 {
                         if let Ok(r) = rx.recv() {
                             running_count -= 1;
+                            if !json_stream {
+                                let duration = format_duration(r.duration);
+                                if r.success {
+                                    eprintln!(
+                                        "  ✓ {}  {}  {}  {}",
+                                        r.id, r.title, r.action, duration
+                                    );
+                                } else {
+                                    eprintln!(
+                                        "  ✗ {}  {}  {}  {} (failed)",
+                                        r.id, r.title, r.action, duration
+                                    );
+                                }
+                            }
                             results.push(r);
                         }
                     }

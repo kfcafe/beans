@@ -243,7 +243,12 @@ fn run_once(
 
     match spawn_mode {
         SpawnMode::Direct => {
-            // Ready-queue: start each bean as soon as its specific deps finish
+            if !args.json_stream {
+                eprintln!("Dispatching {} bean(s)...", total_beans);
+            }
+
+            // Ready-queue: start each bean as soon as its specific deps finish.
+            // Progress (▸ start, ✓/✗ done) is printed in real-time by the queue.
             let (results, had_failure) = run_ready_queue_direct(
                 beans_dir,
                 &plan.all_beans,
@@ -255,7 +260,6 @@ fn run_once(
             let mut done = 0u32;
             let mut failed = 0u32;
             for result in &results {
-                let duration = format_duration(result.duration);
                 if result.success {
                     if args.json_stream {
                         stream::emit(&StreamEvent::BeanDone {
@@ -269,11 +273,6 @@ fn run_once(
                             turns: Some(result.turns),
                             failure_summary: None,
                         });
-                    } else {
-                        eprintln!(
-                            "  ✓ {}  {}  {}  {}",
-                            result.id, result.title, result.action, duration
-                        );
                     }
                     done += 1;
                     successful_ids.push(result.id.clone());
@@ -290,11 +289,6 @@ fn run_once(
                             turns: Some(result.turns),
                             failure_summary: result.failure_summary.clone(),
                         });
-                    } else {
-                        eprintln!(
-                            "  ✗ {}  {}  {}  {} (failed)",
-                            result.id, result.title, result.action, duration
-                        );
                     }
                     failed += 1;
                 }
@@ -502,7 +496,7 @@ fn run_loop(
 }
 
 /// Format a duration as M:SS.
-fn format_duration(d: Duration) -> String {
+pub(super) fn format_duration(d: Duration) -> String {
     let secs = d.as_secs();
     format!("{}:{:02}", secs / 60, secs % 60)
 }

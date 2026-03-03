@@ -11,7 +11,7 @@ A walkthrough guide for agents (and developers) on creating, executing, and mana
 3. [Creating Effective Beans](#creating-effective-beans)
 4. [Writing Descriptions That Agents Can Execute](#writing-descriptions-that-agents-can-execute)
 5. [Acceptance Criteria & Verification](#acceptance-criteria--verification)
-6. [Hierarchical Decomposition](#hierarchical-decomposition)
+6. [Splitting Work Into Subtasks](#splitting-work-into-subtasks)
 7. [The Agent Workflow](#the-agent-workflow)
 8. [Dependency Management](#dependency-management)
 9. [Common Mistakes & How to Avoid Them](#common-mistakes--how-to-avoid-them)
@@ -369,7 +369,7 @@ verify: npm test -- --grep "refresh"
 
 ---
 
-## Hierarchical Decomposition
+## Splitting Work Into Subtasks
 
 Strategic parents provide context. Leaf beans are agent-executable units.
 
@@ -891,7 +891,7 @@ title: Feature A - Part 2
 dependencies: [1]  # Should be parent-child instead
 ```
 
-**Fix:** Use hierarchy (parent.id) for decomposition, dependencies for blocking.
+**Fix:** Use hierarchy (parent.id) to split work into subtasks, dependencies for blocking.
 
 ```yaml
 # Better
@@ -1318,7 +1318,7 @@ Beans is evolving from a task tracker into a comprehensive orchestration platfor
 ### Current Implementation Status
 
 Already available:
-- `bn run` / `bn plan` — Built-in agent orchestration and task decomposition
+- `bn run` / `bn plan` — Built-in agent orchestration and subtask generation
 - `bn agents` / `bn logs` — Agent monitoring and log viewing
 - `bn init --agent` — Guided agent setup wizard with presets
 - `bn claim` / `bn verify` — Atomic task claiming and verification without closing
@@ -1339,7 +1339,7 @@ Already available:
 2. **Size beans to ~1-5 files, 1-5 functions.** Bigger = split into children.
 3. **Write descriptions for cold reads.** Assume the agent has no prior context.
 4. **Acceptance criteria must be testable.** Verify command proves it.
-5. **Use hierarchy for decomposition** (parent/child), **dependencies for blocking** (A waits for B).
+5. **Use hierarchy to split work** (parent/child), **dependencies for blocking** (A waits for B).
 6. **Parents provide context.** Leaves are executable.
 7. **`bn context <id>` is the single source of truth** — agents read it before starting work.
 8. **Agents claim atomically.** Only one agent per bean.
