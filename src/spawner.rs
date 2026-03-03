@@ -641,9 +641,11 @@ mod tests {
             post_plan: None,
             verify_timeout: None,
             review: None,
+            user: None,
+            user_email: None,
         };
 
-        let result = spawner.spawn("1", "Test", AgentAction::Implement, &config);
+        let result = spawner.spawn("1", "Test", AgentAction::Implement, &config, None);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("No run template"), "Got: {}", msg);
@@ -669,9 +671,11 @@ mod tests {
             post_plan: None,
             verify_timeout: None,
             review: None,
+            user: None,
+            user_email: None,
         };
 
-        let result = spawner.spawn("1", "Test", AgentAction::Plan, &config);
+        let result = spawner.spawn("1", "Test", AgentAction::Plan, &config, None);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(msg.contains("No plan template"), "Got: {}", msg);
