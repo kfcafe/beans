@@ -8,6 +8,7 @@ pub mod ctx_assembler;
 pub mod discovery;
 pub mod failure;
 pub mod graph;
+pub mod history;
 pub(crate) mod hooks;
 pub mod index;
 pub(crate) mod locks;

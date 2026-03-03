@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use crate::bean::{Bean, Status};
+use crate::history::{self, AgentHistoryEntry};
 use crate::index::{Index, IndexEntry};
 use crate::pi_output::{self, AgentEvent};
 use crate::prompt::{build_agent_prompt, PromptOptions};
@@ -489,6 +490,24 @@ pub(super) fn run_single_direct(
     if file_locking {
         let _ = crate::locks::release_all_for_bean(beans_dir, &sb.id);
     }
+
+    // Log to agent_history.jsonl (fire-and-forget)
+    history::append_history(
+        beans_dir,
+        &AgentHistoryEntry {
+            bean_id: sb.id.clone(),
+            title: sb.title.clone(),
+            attempt: bean.attempts + 1,
+            success,
+            duration_secs: duration.as_secs(),
+            tokens: cumulative_tokens,
+            cost: cumulative_cost,
+            tool_count,
+            error: error.clone(),
+            model: "default".to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        },
+    );
 
     AgentResult {
         id: sb.id.clone(),
