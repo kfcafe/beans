@@ -332,7 +332,7 @@ pub fn cmd_init(path: Option<&Path>, args: InitArgs) -> Result<()> {
     if !gitignore_path.exists() {
         fs::write(
             &gitignore_path,
-            "# Regenerable cache — rebuilt automatically by bn sync\nindex.yaml\n\n# File lock\nindex.lock\n",
+            "# Regenerable cache — rebuilt automatically by bn sync\nindex.yaml\narchive.yaml\n\n# File lock\nindex.lock\n",
         )
         .with_context(|| format!("Failed to create .gitignore at {}", gitignore_path.display()))?;
     }

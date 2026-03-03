@@ -9,7 +9,7 @@ use anyhow::Result;
 use crate::bean::{Bean, Status};
 use crate::failure;
 use crate::history::{self, AgentHistoryEntry};
-use crate::index::{Index, IndexEntry};
+use crate::index::{ArchiveIndex, Index, IndexEntry};
 use crate::pi_output::{self, AgentEvent};
 use crate::prompt::{build_agent_prompt, PromptOptions};
 use crate::stream::{self, StreamEvent};
@@ -21,23 +21,39 @@ use super::wave::compute_waves;
 use super::AgentResult;
 
 /// Check if all dependencies of an index entry are closed.
-pub(super) fn all_deps_closed(entry: &IndexEntry, index: &Index) -> bool {
+///
+/// Checks both the active index and the archive index. A dependency found in
+/// the archive is considered satisfied (archived means closed). A dependency
+/// found in neither index is treated as unsatisfied (catches typos).
+pub(super) fn all_deps_closed(
+    entry: &IndexEntry,
+    index: &Index,
+    archive: &ArchiveIndex,
+) -> bool {
     for dep_id in &entry.dependencies {
         match index.beans.iter().find(|e| e.id == *dep_id) {
             Some(dep) if dep.status == Status::Closed => {}
-            _ => return false,
+            Some(_) => return false, // Found in active index but not closed
+            None => {
+                // Not in active index — check archive (archived = closed)
+                if !archive.beans.iter().any(|e| e.id == *dep_id) {
+                    return false; // Not found in either index
+                }
+            }
         }
     }
 
     for required in &entry.requires {
-        if let Some(producer) = index
-            .beans
-            .iter()
-            .find(|e| e.id != entry.id && e.parent == entry.parent && e.produces.contains(required))
-        {
+        // Check active index for a producer
+        if let Some(producer) = index.beans.iter().find(|e| {
+            e.id != entry.id && e.parent == entry.parent && e.produces.contains(required)
+        }) {
             if producer.status != Status::Closed {
                 return false;
             }
+        } else {
+            // Check archive for a producer (archived = closed, so always satisfied)
+            // If not found in either, no producer exists — treat as satisfied
         }
     }
 
@@ -812,5 +828,113 @@ mod tests {
         let result = build_agent_prompt(&bean, &options).unwrap();
         assert!(result.system_prompt.contains("Project Rules"));
         assert!(result.system_prompt.contains("Always test."));
+    }
+
+    // -- all_deps_closed with archive index tests --
+
+    fn make_index_entry(
+        id: &str,
+        status: Status,
+        deps: Vec<&str>,
+        parent: Option<&str>,
+        produces: Vec<&str>,
+        requires: Vec<&str>,
+    ) -> IndexEntry {
+        IndexEntry {
+            id: id.to_string(),
+            title: format!("Bean {}", id),
+            status,
+            priority: 2,
+            parent: parent.map(|s| s.to_string()),
+            dependencies: deps.into_iter().map(|s| s.to_string()).collect(),
+            labels: vec![],
+            assignee: None,
+            updated_at: chrono::Utc::now(),
+            produces: produces.into_iter().map(|s| s.to_string()).collect(),
+            requires: requires.into_iter().map(|s| s.to_string()).collect(),
+            has_verify: true,
+            claimed_by: None,
+            attempts: 0,
+            paths: vec![],
+        }
+    }
+
+    #[test]
+    fn all_deps_closed_with_archived_dep() {
+        // Bean A depends on bean B. B is archived (not in active index).
+        // all_deps_closed should return true because B is in the archive.
+        let entry_a = make_index_entry("A", Status::Open, vec!["B"], None, vec![], vec![]);
+        let index = Index { beans: vec![entry_a.clone()] };
+
+        let archived_b = make_index_entry("B", Status::Closed, vec![], None, vec![], vec![]);
+        let archive = ArchiveIndex { beans: vec![archived_b] };
+
+        assert!(all_deps_closed(&entry_a, &index, &archive));
+    }
+
+    #[test]
+    fn all_deps_closed_with_missing_dep() {
+        // Bean A depends on bean B. B is in neither index.
+        // all_deps_closed should return false (typo protection).
+        let entry_a = make_index_entry("A", Status::Open, vec!["B"], None, vec![], vec![]);
+        let index = Index { beans: vec![entry_a.clone()] };
+        let archive = ArchiveIndex { beans: vec![] };
+
+        assert!(!all_deps_closed(&entry_a, &index, &archive));
+    }
+
+    #[test]
+    fn all_deps_closed_with_active_closed_dep() {
+        // Bean A depends on bean B. B is in active index and closed.
+        let entry_a = make_index_entry("A", Status::Open, vec!["B"], None, vec![], vec![]);
+        let entry_b = make_index_entry("B", Status::Closed, vec![], None, vec![], vec![]);
+        let index = Index { beans: vec![entry_a.clone(), entry_b] };
+        let archive = ArchiveIndex { beans: vec![] };
+
+        assert!(all_deps_closed(&entry_a, &index, &archive));
+    }
+
+    #[test]
+    fn all_deps_closed_with_active_open_dep() {
+        // Bean A depends on bean B. B is in active index but still open.
+        let entry_a = make_index_entry("A", Status::Open, vec!["B"], None, vec![], vec![]);
+        let entry_b = make_index_entry("B", Status::Open, vec![], None, vec![], vec![]);
+        let index = Index { beans: vec![entry_a.clone(), entry_b] };
+        let archive = ArchiveIndex { beans: vec![] };
+
+        assert!(!all_deps_closed(&entry_a, &index, &archive));
+    }
+
+    #[test]
+    fn all_deps_closed_with_requires_and_archived_producer() {
+        // Bean A requires artifact "types.rs". Bean B (archived) produces it.
+        // Both share the same parent. A should be satisfied.
+        let entry_a = make_index_entry(
+            "A", Status::Open, vec![], Some("parent"),
+            vec![], vec!["types.rs"],
+        );
+        let index = Index { beans: vec![entry_a.clone()] };
+
+        let archived_b = make_index_entry(
+            "B", Status::Closed, vec![], Some("parent"),
+            vec!["types.rs"], vec![],
+        );
+        let archive = ArchiveIndex { beans: vec![archived_b] };
+
+        assert!(all_deps_closed(&entry_a, &index, &archive));
+    }
+
+    #[test]
+    fn all_deps_closed_mixed_active_and_archived_deps() {
+        // Bean C depends on A (active, closed) and B (archived).
+        // Both satisfied — should return true.
+        let entry_a = make_index_entry("A", Status::Closed, vec![], None, vec![], vec![]);
+        let entry_c = make_index_entry("C", Status::Open, vec!["A", "B"], None, vec![], vec![]);
+        let index = Index { beans: vec![entry_a, entry_c.clone()] };
+
+        let archived_b = make_index_entry("B", Status::Closed, vec![], None, vec![], vec![]);
+        let archive = ArchiveIndex { beans: vec![archived_b] };
+
+        assert!(all_deps_closed(&entry_c, &index, &archive));
     }
 }

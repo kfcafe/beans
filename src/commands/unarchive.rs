@@ -5,7 +5,7 @@ use chrono::Utc;
 
 use crate::bean::Bean;
 use crate::discovery::find_archived_bean;
-use crate::index::Index;
+use crate::index::{ArchiveIndex, Index};
 
 /// Unarchive a bean by moving it from `.beans/archive/**/` back to `.beans/`.
 ///
@@ -61,6 +61,14 @@ pub fn cmd_unarchive(beans_dir: &Path, id: &str) -> Result<()> {
     // Save the bean to its new location
     bean.to_file(&target_path)
         .with_context(|| format!("Failed to save unarchived bean: {}", id))?;
+
+    // Remove from archive index
+    {
+        let mut archive_index =
+            ArchiveIndex::load(beans_dir).unwrap_or(ArchiveIndex { beans: Vec::new() });
+        archive_index.remove(id);
+        let _ = archive_index.save(beans_dir);
+    }
 
     // Rebuild index
     let index = Index::build(beans_dir).with_context(|| "Failed to rebuild index")?;
@@ -287,5 +295,27 @@ mod tests {
         let unarchived_bean = Bean::from_file(&unarchived_path).unwrap();
         assert_eq!(unarchived_bean.id, "5");
         assert!(!unarchived_bean.is_archived);
+    }
+
+    #[test]
+    fn test_unarchive_removes_from_archive_yaml() {
+        let (_dir, beans_dir) = setup_test_beans_dir();
+
+        // Create two archived beans
+        create_archived_bean(&beans_dir, "1", "Task One", "2026", "01");
+        create_archived_bean(&beans_dir, "2", "Task Two", "2026", "01");
+
+        // Build and save archive index with both beans
+        let archive = ArchiveIndex::build(&beans_dir).unwrap();
+        archive.save(&beans_dir).unwrap();
+        assert_eq!(archive.beans.len(), 2);
+
+        // Unarchive bean 1
+        cmd_unarchive(&beans_dir, "1").unwrap();
+
+        // archive.yaml should now only contain bean 2
+        let updated_archive = ArchiveIndex::load(&beans_dir).unwrap();
+        assert_eq!(updated_archive.beans.len(), 1);
+        assert_eq!(updated_archive.beans[0].id, "2");
     }
 }

@@ -323,6 +323,116 @@ impl Index {
 }
 
 // ---------------------------------------------------------------------------
+// ArchiveIndex — cached index of archived beans
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArchiveIndex {
+    pub beans: Vec<IndexEntry>,
+}
+
+impl ArchiveIndex {
+    /// Build the archive index by walking `.beans/archive/` recursively.
+    /// Reuses `Index::collect_archived` to find all archived bean files,
+    /// then sorts entries by ID using natural ordering.
+    pub fn build(beans_dir: &Path) -> Result<Self> {
+        let mut entries = Index::collect_archived(beans_dir)?;
+        entries.sort_by(|a, b| natural_cmp(&a.id, &b.id));
+        Ok(ArchiveIndex { beans: entries })
+    }
+
+    /// Load the archive index from `.beans/archive.yaml`.
+    pub fn load(beans_dir: &Path) -> Result<Self> {
+        let path = beans_dir.join("archive.yaml");
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        let index: ArchiveIndex =
+            serde_yml::from_str(&contents).with_context(|| "Failed to parse archive.yaml")?;
+        Ok(index)
+    }
+
+    /// Save the archive index to `.beans/archive.yaml`.
+    pub fn save(&self, beans_dir: &Path) -> Result<()> {
+        let path = beans_dir.join("archive.yaml");
+        let yaml =
+            serde_yml::to_string(self).with_context(|| "Failed to serialize archive index")?;
+        atomic_write(&path, &yaml)
+            .with_context(|| format!("Failed to write {}", path.display()))?;
+        Ok(())
+    }
+
+    /// Load cached archive index or rebuild if stale.
+    pub fn load_or_rebuild(beans_dir: &Path) -> Result<Self> {
+        if Self::is_stale(beans_dir)? {
+            let index = Self::build(beans_dir)?;
+            // Only save if there are entries or the file already exists
+            // (avoids creating archive.yaml when there's no archive dir)
+            if !index.beans.is_empty() || beans_dir.join("archive.yaml").exists() {
+                index.save(beans_dir)?;
+            }
+            Ok(index)
+        } else {
+            Self::load(beans_dir)
+        }
+    }
+
+    /// Check whether the cached archive index is stale.
+    /// Returns true if archive.yaml is missing (and archive dir exists),
+    /// or if any file in the archive tree has been modified after archive.yaml.
+    pub fn is_stale(beans_dir: &Path) -> Result<bool> {
+        let archive_yaml = beans_dir.join("archive.yaml");
+        let archive_dir = beans_dir.join("archive");
+
+        if !archive_yaml.exists() {
+            // If the archive dir doesn't exist either, nothing to index
+            return Ok(archive_dir.is_dir());
+        }
+
+        if !archive_dir.is_dir() {
+            return Ok(false);
+        }
+
+        let index_mtime = fs::metadata(&archive_yaml)
+            .with_context(|| "Failed to read archive.yaml metadata")?
+            .modified()
+            .with_context(|| "Failed to get archive.yaml mtime")?;
+
+        Self::any_file_newer(&archive_dir, index_mtime)
+    }
+
+    /// Check if any file in the given directory tree is newer than the reference time.
+    fn any_file_newer(dir: &Path, reference: std::time::SystemTime) -> Result<bool> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                if Self::any_file_newer(&path, reference)? {
+                    return Ok(true);
+                }
+            } else if path.is_file() {
+                let mtime = fs::metadata(&path)?.modified()?;
+                if mtime > reference {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Append an entry, deduplicating by ID (replaces any existing entry with the same ID).
+    pub fn append(&mut self, entry: IndexEntry) {
+        self.beans.retain(|e| e.id != entry.id);
+        self.beans.push(entry);
+        self.beans.sort_by(|a, b| natural_cmp(&a.id, &b.id));
+    }
+
+    /// Remove an entry by ID.
+    pub fn remove(&mut self, id: &str) {
+        self.beans.retain(|e| e.id != id);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // LockedIndex — exclusive access during read-modify-write
 // ---------------------------------------------------------------------------
 
@@ -876,5 +986,170 @@ mod format_count_tests {
         let (md_count, yaml_count) = count_bean_formats(&beans_dir).unwrap();
         assert_eq!(md_count, 0);
         assert_eq!(yaml_count, 0);
+    }
+}
+
+#[cfg(test)]
+mod archive_index_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn setup_beans_dir_with_archive() -> (TempDir, std::path::PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let beans_dir = dir.path().join(".beans");
+        fs::create_dir(&beans_dir).unwrap();
+
+        let archive_dir = beans_dir.join("archive").join("2026").join("03");
+        fs::create_dir_all(&archive_dir).unwrap();
+
+        let mut bean1 = crate::bean::Bean::new("5", "Archived task five");
+        bean1.status = crate::bean::Status::Closed;
+        bean1.is_archived = true;
+        bean1
+            .to_file(archive_dir.join("5-archived-task-five.md"))
+            .unwrap();
+
+        let mut bean2 = crate::bean::Bean::new("3", "Archived task three");
+        bean2.status = crate::bean::Status::Closed;
+        bean2.is_archived = true;
+        bean2
+            .to_file(archive_dir.join("3-archived-task-three.md"))
+            .unwrap();
+
+        (dir, beans_dir)
+    }
+
+    #[test]
+    fn archive_index_build_from_archive_dir() {
+        let (_dir, beans_dir) = setup_beans_dir_with_archive();
+        let archive = ArchiveIndex::build(&beans_dir).unwrap();
+
+        assert_eq!(archive.beans.len(), 2);
+        // Should be sorted by natural ordering: "3" before "5"
+        assert_eq!(archive.beans[0].id, "3");
+        assert_eq!(archive.beans[1].id, "5");
+        assert_eq!(archive.beans[0].status, crate::bean::Status::Closed);
+        assert_eq!(archive.beans[1].status, crate::bean::Status::Closed);
+    }
+
+    #[test]
+    fn archive_index_build_empty_when_no_archive_dir() {
+        let dir = TempDir::new().unwrap();
+        let beans_dir = dir.path().join(".beans");
+        fs::create_dir(&beans_dir).unwrap();
+
+        let archive = ArchiveIndex::build(&beans_dir).unwrap();
+        assert!(archive.beans.is_empty());
+    }
+
+    #[test]
+    fn archive_index_save_load_roundtrip() {
+        let (_dir, beans_dir) = setup_beans_dir_with_archive();
+        let original = ArchiveIndex::build(&beans_dir).unwrap();
+        original.save(&beans_dir).unwrap();
+
+        let loaded = ArchiveIndex::load(&beans_dir).unwrap();
+        assert_eq!(original, loaded);
+    }
+
+    #[test]
+    fn archive_index_append_deduplicates() {
+        let (_dir, beans_dir) = setup_beans_dir_with_archive();
+        let mut archive = ArchiveIndex::build(&beans_dir).unwrap();
+        assert_eq!(archive.beans.len(), 2);
+
+        // Append a new entry
+        let mut new_bean = crate::bean::Bean::new("7", "New archived");
+        new_bean.status = crate::bean::Status::Closed;
+        archive.append(IndexEntry::from(&new_bean));
+        assert_eq!(archive.beans.len(), 3);
+
+        // Append again with same ID — should replace, not duplicate
+        let mut updated_bean = crate::bean::Bean::new("7", "Updated title");
+        updated_bean.status = crate::bean::Status::Closed;
+        archive.append(IndexEntry::from(&updated_bean));
+        assert_eq!(archive.beans.len(), 3);
+
+        let entry = archive.beans.iter().find(|e| e.id == "7").unwrap();
+        assert_eq!(entry.title, "Updated title");
+    }
+
+    #[test]
+    fn archive_index_remove() {
+        let (_dir, beans_dir) = setup_beans_dir_with_archive();
+        let mut archive = ArchiveIndex::build(&beans_dir).unwrap();
+        assert_eq!(archive.beans.len(), 2);
+
+        archive.remove("3");
+        assert_eq!(archive.beans.len(), 1);
+        assert_eq!(archive.beans[0].id, "5");
+
+        // Removing non-existent ID is a no-op
+        archive.remove("999");
+        assert_eq!(archive.beans.len(), 1);
+    }
+
+    #[test]
+    fn archive_index_is_stale_when_no_archive_yaml() {
+        let (_dir, beans_dir) = setup_beans_dir_with_archive();
+        // Archive dir exists but archive.yaml doesn't
+        assert!(ArchiveIndex::is_stale(&beans_dir).unwrap());
+    }
+
+    #[test]
+    fn archive_index_not_stale_when_no_archive_dir() {
+        let dir = TempDir::new().unwrap();
+        let beans_dir = dir.path().join(".beans");
+        fs::create_dir(&beans_dir).unwrap();
+        // Neither archive dir nor archive.yaml exist
+        assert!(!ArchiveIndex::is_stale(&beans_dir).unwrap());
+    }
+
+    #[test]
+    fn archive_index_not_stale_after_build_and_save() {
+        let (_dir, beans_dir) = setup_beans_dir_with_archive();
+        let archive = ArchiveIndex::build(&beans_dir).unwrap();
+        archive.save(&beans_dir).unwrap();
+        assert!(!ArchiveIndex::is_stale(&beans_dir).unwrap());
+    }
+
+    #[test]
+    fn archive_index_stale_when_file_newer() {
+        let (_dir, beans_dir) = setup_beans_dir_with_archive();
+        let archive = ArchiveIndex::build(&beans_dir).unwrap();
+        archive.save(&beans_dir).unwrap();
+
+        // Wait and add a new file to the archive
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let archive_dir = beans_dir.join("archive").join("2026").join("03");
+        let mut new_bean = crate::bean::Bean::new("9", "Newer");
+        new_bean.status = crate::bean::Status::Closed;
+        new_bean.is_archived = true;
+        new_bean
+            .to_file(archive_dir.join("9-newer.md"))
+            .unwrap();
+
+        assert!(ArchiveIndex::is_stale(&beans_dir).unwrap());
+    }
+
+    #[test]
+    fn archive_index_load_or_rebuild_builds_when_stale() {
+        let (_dir, beans_dir) = setup_beans_dir_with_archive();
+        let archive = ArchiveIndex::load_or_rebuild(&beans_dir).unwrap();
+        assert_eq!(archive.beans.len(), 2);
+        // Should have created archive.yaml
+        assert!(beans_dir.join("archive.yaml").exists());
+    }
+
+    #[test]
+    fn archive_index_load_or_rebuild_returns_empty_when_no_archive() {
+        let dir = TempDir::new().unwrap();
+        let beans_dir = dir.path().join(".beans");
+        fs::create_dir(&beans_dir).unwrap();
+
+        let archive = ArchiveIndex::load_or_rebuild(&beans_dir).unwrap();
+        assert!(archive.beans.is_empty());
+        // Should NOT create archive.yaml when there's nothing to index
+        assert!(!beans_dir.join("archive.yaml").exists());
     }
 }

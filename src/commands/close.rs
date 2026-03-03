@@ -13,7 +13,7 @@ use crate::failure;
 use crate::hooks::{
     current_git_branch, execute_config_hook, execute_hook, is_trusted, HookEvent, HookVars,
 };
-use crate::index::Index;
+use crate::index::{ArchiveIndex, Index, IndexEntry};
 use crate::util::title_to_slug;
 use crate::worktree;
 
@@ -291,6 +291,14 @@ fn auto_close_parent(beans_dir: &Path, parent_id: &str) -> Result<()> {
     bean.is_archived = true;
     bean.to_file(&archive_path)
         .with_context(|| format!("Failed to save archived parent bean: {}", parent_id))?;
+
+    // Append to archive index
+    {
+        let mut archive_index =
+            ArchiveIndex::load(beans_dir).unwrap_or(ArchiveIndex { beans: Vec::new() });
+        archive_index.append(IndexEntry::from(&bean));
+        let _ = archive_index.save(beans_dir);
+    }
 
     println!("Auto-closed parent bean {}: {}", parent_id, bean.title);
 
@@ -728,6 +736,14 @@ pub fn cmd_close(
         bean.is_archived = true;
         bean.to_file(&archive_path)
             .with_context(|| format!("Failed to save archived bean: {}", id))?;
+
+        // Append to archive index
+        {
+            let mut archive_index =
+                ArchiveIndex::load(beans_dir).unwrap_or(ArchiveIndex { beans: Vec::new() });
+            archive_index.append(IndexEntry::from(&bean));
+            let _ = archive_index.save(beans_dir);
+        }
 
         println!("Closed bean {}: {}", id, bean.title);
         any_closed = true;

@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::bean::Status;
 use crate::blocking::{check_blocked, BlockReason};
 use crate::config::Config;
-use crate::index::{Index, IndexEntry};
+use crate::index::{ArchiveIndex, Index, IndexEntry};
 use crate::stream::{self, StreamEvent};
 
 use super::ready_queue::all_deps_closed;
@@ -53,6 +53,9 @@ pub(super) fn plan_dispatch(
     simulate: bool,
 ) -> Result<DispatchPlan> {
     let index = Index::load_or_rebuild(beans_dir)?;
+    let archive = ArchiveIndex::load_or_rebuild(beans_dir).unwrap_or_else(|_| ArchiveIndex {
+        beans: Vec::new(),
+    });
 
     // Get candidate beans: open with verify.
     // In simulate mode (dry-run), include all open beans with verify — even those
@@ -62,7 +65,9 @@ pub(super) fn plan_dispatch(
         .beans
         .iter()
         .filter(|e| {
-            e.has_verify && e.status == Status::Open && (simulate || all_deps_closed(e, &index))
+            e.has_verify
+                && e.status == Status::Open
+                && (simulate || all_deps_closed(e, &index, &archive))
         })
         .collect();
 

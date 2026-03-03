@@ -5,7 +5,7 @@ use chrono::Utc;
 
 use crate::bean::{Bean, Status};
 use crate::discovery::{archive_path_for_bean, find_bean_file};
-use crate::index::Index;
+use crate::index::{ArchiveIndex, Index};
 use crate::util::title_to_slug;
 
 /// A record of one bean that was (or would be) archived during tidy.
@@ -325,6 +325,15 @@ fn cmd_tidy_inner(beans_dir: &Path, dry_run: bool, check_agents: fn() -> bool) -
     final_index
         .save(beans_dir)
         .context("Failed to save index")?;
+
+    // Step 5b — Rebuild the archive index too, since beans were moved into archive.
+    if !dry_run && !tidied.is_empty() {
+        let archive_index =
+            ArchiveIndex::build(beans_dir).context("Failed to rebuild archive index after tidy")?;
+        archive_index
+            .save(beans_dir)
+            .context("Failed to save archive index")?;
+    }
 
     // ── Print results ────────────────────────────────────────────────
 
@@ -749,5 +758,46 @@ mod tests {
         let index = Index::load(&beans_dir).unwrap();
         assert_eq!(index.beans.len(), 1);
         assert_eq!(index.beans[0].id, "1");
+    }
+
+    #[test]
+    fn tidy_updates_archive_yaml() {
+        let (_dir, beans_dir) = setup();
+
+        // Create two closed beans
+        let mut bean1 = Bean::new("1", "Done first");
+        bean1.status = Status::Closed;
+        bean1.closed_at = Some(chrono::Utc::now());
+        write_bean(&beans_dir, &bean1);
+
+        let mut bean2 = Bean::new("2", "Done second");
+        bean2.status = Status::Closed;
+        bean2.closed_at = Some(chrono::Utc::now());
+        write_bean(&beans_dir, &bean2);
+
+        cmd_tidy_inner(&beans_dir, false, no_agents).unwrap();
+
+        // archive.yaml should exist and contain both archived beans
+        assert!(beans_dir.join("archive.yaml").exists());
+        let archive = ArchiveIndex::load(&beans_dir).unwrap();
+        assert_eq!(archive.beans.len(), 2);
+        let ids: Vec<&str> = archive.beans.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&"1"));
+        assert!(ids.contains(&"2"));
+    }
+
+    #[test]
+    fn tidy_dry_run_does_not_create_archive_yaml() {
+        let (_dir, beans_dir) = setup();
+
+        let mut bean = Bean::new("1", "Done task");
+        bean.status = Status::Closed;
+        bean.closed_at = Some(chrono::Utc::now());
+        write_bean(&beans_dir, &bean);
+
+        cmd_tidy_inner(&beans_dir, true, no_agents).unwrap();
+
+        // archive.yaml should NOT be created in dry-run mode
+        assert!(!beans_dir.join("archive.yaml").exists());
     }
 }
