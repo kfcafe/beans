@@ -393,6 +393,7 @@ fn main() -> Result<()> {
             json,
             ids,
             format,
+            ..
         } => cmd_list(
             status.as_deref(),
             priority,
@@ -467,7 +468,7 @@ fn main() -> Result<()> {
             }
         }
 
-        Command::Verify { id, json } => {
+        Command::Verify { id, json, .. } => {
             validate_bean_id(&id)?;
             let resolved_id = resolve_bean_id(&id, &beans_dir)?;
             let passed = cmd_verify(&beans_dir, &resolved_id)?;
@@ -561,7 +562,7 @@ fn main() -> Result<()> {
         }
         Command::Graph { format } => cmd_graph(&beans_dir, &format),
         Command::Sync => cmd_sync(&beans_dir),
-        Command::Tidy { dry_run } => cmd_tidy(&beans_dir, dry_run),
+        Command::Tidy { dry_run, .. } => cmd_tidy(&beans_dir, dry_run),
         Command::Stats { json } => cmd_stats(&beans_dir, json),
         Command::Doctor { fix } => cmd_doctor(&beans_dir, fix),
         Command::Trust { revoke, check } => cmd_trust(&beans_dir, revoke, check),

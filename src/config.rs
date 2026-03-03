@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -92,6 +93,12 @@ pub struct Config {
     /// Optional — review is disabled if not configured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review: Option<ReviewConfig>,
+    /// User identity name (e.g., "alice"). Used for claimed_by and created_by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    /// User email (e.g., "alice@co"). Optional, for git integration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_email: Option<String>,
 }
 
 fn default_auto_close_parent() -> bool {
@@ -133,6 +140,8 @@ impl Default for Config {
             post_plan: None,
             verify_timeout: None,
             review: None,
+            user: None,
+            user_email: None,
         }
     }
 }

@@ -349,6 +349,10 @@ Examples:
         /// Output result as JSON
         #[arg(long)]
         json: bool,
+
+        /// Suppress informational output
+        #[arg(long, short = 'q')]
+        quiet: bool,
     },
 
     /// Reopen a closed bean
@@ -448,6 +452,10 @@ Examples:
         /// Show what would happen without changing any files
         #[arg(long)]
         dry_run: bool,
+
+        /// Suppress informational output
+        #[arg(long, short = 'q')]
+        quiet: bool,
     },
 
     /// Project statistics
