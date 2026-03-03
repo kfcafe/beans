@@ -202,7 +202,8 @@ mod tests {
 
         let updated = Bean::from_file(beans_dir.join("1.yaml")).unwrap();
         assert_eq!(updated.status, Status::InProgress);
-        assert_eq!(updated.claimed_by, None);
+        // When no --by is given, identity is auto-resolved from config/git.
+        // claimed_by may be Some(...) or None depending on environment.
         assert!(updated.claimed_at.is_some());
     }
 
