@@ -363,16 +363,20 @@ impl ArchiveIndex {
 
     /// Load cached archive index or rebuild if stale.
     pub fn load_or_rebuild(beans_dir: &Path) -> Result<Self> {
+        let archive_yaml = beans_dir.join("archive.yaml");
         if Self::is_stale(beans_dir)? {
             let index = Self::build(beans_dir)?;
             // Only save if there are entries or the file already exists
             // (avoids creating archive.yaml when there's no archive dir)
-            if !index.beans.is_empty() || beans_dir.join("archive.yaml").exists() {
+            if !index.beans.is_empty() || archive_yaml.exists() {
                 index.save(beans_dir)?;
             }
             Ok(index)
-        } else {
+        } else if archive_yaml.exists() {
             Self::load(beans_dir)
+        } else {
+            // No archive dir and no archive.yaml — return empty
+            Ok(ArchiveIndex { beans: Vec::new() })
         }
     }
 
