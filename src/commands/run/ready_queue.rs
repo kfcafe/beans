@@ -597,7 +597,7 @@ pub(super) fn run_single_direct(
         error,
         tool_count,
         turns,
-        failure_summary: None,
+        failure_summary,
     }
 }
 
