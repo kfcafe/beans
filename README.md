@@ -824,22 +824,21 @@ bn completions powershell >> $PROFILE
 
 ## Why Not X?
 
-| | beans | [beads](https://github.com/steveyegge/beads) | [Maestro](https://github.com/RunMaestro/Maestro) | [Conductor](https://github.com/gemini-cli-extensions/conductor) | [Emdash](https://github.com/generalaction/emdash) |
-|---|---|---|---|---|---|
-| **What it is** | Task tracker + orchestrator | Agent memory/task tracker | Multi-agent orchestration app | Spec→Plan→Implement workflow | Multi-agent session manager |
-| **Verify gates** | ✓ Fail-first enforced | ✗ | ✗ | ✗ Manual prompts per phase | ✗ |
-| **Agent dispatch** | ✓ `bn run` (parallel) | ✗ | ✓ Auto Run (parallel) | ✓ `/implement` (sequential) | ✓ Parallel |
-| **Dependency scheduling** | ✓ Auto-inferred | ✓ Manual (4 types) | ✗ | ✗ | ✗ |
-| **Failure accumulation** | ✓ Per-attempt history | ✗ | ✗ | ✗ | ✗ |
-| **Worktree isolation** | ✗ | ✗ | ✓ Per task | ✗ | ✓ Per task |
-| **PR/GitHub integration** | ✗ | ✗ | ✓ | ✗ | ✓ Diff, create, line comments |
-| **Spec/plan artifacts** | ~ `bn plan` generates subtasks | ✗ | ✗ | ✓ spec.md + plan.md in git | ✗ |
-| **Memory compaction** | ✗ | ✓ AI-assisted (70–95%) | ✗ | ✗ | ✗ |
-| **Visual monitoring** | ✗ CLI only | ✗ CLI only | ✓ Real-time GUI | ✗ CLI only | ✓ Real-time GUI |
-| **Agent support** | Any CLI agent | Any CLI agent | Claude/Codex/OpenCode/Droid | Gemini only | 8+ CLIs |
-| **Storage** | Markdown (git) | JSONL + SQLite (git) | SQLite (local) | Markdown (git) | SQLite (local) |
+| | beans | [Spec Kit](https://github.com/github/spec-kit) | [GSD](https://github.com/gsd-build/get-shit-done) | [Ralph loop](https://ghuntley.com/ralph/) |
+|---|---|---|---|---|
+| **What it is** | Task tracker + orchestrator | Spec-driven dev toolkit | Context engineering system | Bash `while true` loop |
+| **Philosophy** | Tasks with enforced verify gates | Specifications drive code | Fresh context per subagent | Keep iterating until done |
+| **Verify gates** | ✓ Enforced (`exit 0` or stays open) | ✗ Manual review checkpoints | ~ Conversational UAT | ✗ Completion promise (honor system) |
+| **Agent dispatch** | ✓ Parallel (`bn run -j 8`) | ✓ Sequential | ✓ Wave-based parallel | ✗ Single agent loop |
+| **Dependency scheduling** | ✓ Auto-inferred | ~ Task ordering | ✓ Wave-based | ✗ |
+| **Failure accumulation** | ✓ Per-attempt history | ✗ | ✗ | ~ Files persist between iterations |
+| **Context isolation** | ✓ Per-bean scoped context | ✗ Artifact structure | ✓ Fresh 200k per subagent | ✗ Same prompt, growing session |
+| **Spec/plan artifacts** | ~ Lightweight (`bn plan`) | ✓ Rich (spec, plan, research, contracts) | ✓ Rich (project, requirements, roadmap) | ✗ Single prompt file |
+| **Agent support** | Any CLI agent | 18+ agents | 4 runtimes | Any CLI agent |
+| **Ceremony** | Low (create → run → done) | High (5-phase workflow) | Medium (4-phase workflow) | None |
+| **Storage** | Markdown in git | Markdown in git | Markdown in git | Files on disk |
 
-Inspired by Steve Yegge's [beads](https://github.com/steveyegge/beads) — beans trades scale for simplicity and enforced verification.
+beans trades spec-driven ceremony for lightweight, enforced verification. If the task is well-defined, skip the 5-phase planning ritual — create a bean, run it, verify it passes.
 
 ## Design Principles
 
