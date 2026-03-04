@@ -311,10 +311,7 @@ mod tests {
         let entry = index.beans.iter().find(|e| e.id == "1").unwrap();
         // bean 1 has no deps — unscoped beans are no longer blocked
         let reason = check_blocked(entry, &index);
-        assert!(
-            reason.is_none(),
-            "should not be blocked: {:?}", reason
-        );
+        assert!(reason.is_none(), "should not be blocked: {:?}", reason);
     }
 
     fn make_scoped_entry(id: &str, status: Status) -> IndexEntry {

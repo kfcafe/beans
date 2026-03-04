@@ -55,9 +55,8 @@ pub(super) fn plan_dispatch(
     simulate: bool,
 ) -> Result<DispatchPlan> {
     let index = Index::load_or_rebuild(beans_dir)?;
-    let archive = ArchiveIndex::load_or_rebuild(beans_dir).unwrap_or_else(|_| ArchiveIndex {
-        beans: Vec::new(),
-    });
+    let archive = ArchiveIndex::load_or_rebuild(beans_dir)
+        .unwrap_or_else(|_| ArchiveIndex { beans: Vec::new() });
 
     // Get candidate beans: open with verify.
     // In simulate mode (dry-run), include all open beans with verify — even those

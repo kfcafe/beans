@@ -1129,9 +1129,7 @@ mod archive_index_tests {
         let mut new_bean = crate::bean::Bean::new("9", "Newer");
         new_bean.status = crate::bean::Status::Closed;
         new_bean.is_archived = true;
-        new_bean
-            .to_file(archive_dir.join("9-newer.md"))
-            .unwrap();
+        new_bean.to_file(archive_dir.join("9-newer.md")).unwrap();
 
         assert!(ArchiveIndex::is_stale(&beans_dir).unwrap());
     }

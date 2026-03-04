@@ -22,7 +22,10 @@ pub fn cmd_sync(beans_dir: &Path) -> Result<()> {
 
     println!("Index rebuilt: {} beans indexed.", count);
     if archive_count > 0 {
-        println!("Archive index rebuilt: {} archived beans indexed.", archive_count);
+        println!(
+            "Archive index rebuilt: {} archived beans indexed.",
+            archive_count
+        );
     }
 
     // Warn about mixed formats

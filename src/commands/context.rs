@@ -447,7 +447,13 @@ fn merge_paths(bean: &Bean) -> Vec<String> {
 /// regex-extracted paths from the description (fills gaps).
 ///
 /// When `structure_only` is true, only structural summaries are emitted.
-pub fn cmd_context(beans_dir: &Path, id: &str, json: bool, structure_only: bool, agent_prompt: bool) -> Result<()> {
+pub fn cmd_context(
+    beans_dir: &Path,
+    id: &str,
+    json: bool,
+    structure_only: bool,
+    agent_prompt: bool,
+) -> Result<()> {
     let bean_path =
         find_bean_file(beans_dir, id).context(format!("Could not find bean with ID: {}", id))?;
 

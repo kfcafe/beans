@@ -133,7 +133,12 @@ pub fn cmd_tidy(beans_dir: &Path, dry_run: bool, out: &Output) -> Result<()> {
 ///
 /// With `dry_run = true` we report what would change without touching
 /// any files.
-fn cmd_tidy_inner(beans_dir: &Path, dry_run: bool, check_agents: fn() -> bool, out: &Output) -> Result<()> {
+fn cmd_tidy_inner(
+    beans_dir: &Path,
+    dry_run: bool,
+    check_agents: fn() -> bool,
+    out: &Output,
+) -> Result<()> {
     // Step 1 — Build a fresh index so we're working from the truth on disk,
     // not a potentially stale cache.
     let index = Index::build(beans_dir).context("Failed to build index")?;

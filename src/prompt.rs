@@ -134,9 +134,7 @@ pub fn build_agent_prompt(bean: &Bean, options: &PromptOptions) -> Result<Prompt
     }
 
     // 6. Referenced Files
-    let project_dir = beans_dir
-        .parent()
-        .unwrap_or(Path::new("."));
+    let project_dir = beans_dir.parent().unwrap_or(Path::new("."));
     let description = bean.description.as_deref().unwrap_or("");
     if let Some(file_context) = assemble_file_context(description, project_dir) {
         sections.push(file_context);
@@ -282,9 +280,7 @@ fn collect_sibling_discoveries(bean: &Bean, beans_dir: &Path) -> Option<String> 
         .beans
         .iter()
         .filter(|e| {
-            e.id != bean.id
-                && e.parent.as_deref() == Some(parent_id)
-                && e.status == Status::Closed
+            e.id != bean.id && e.parent.as_deref() == Some(parent_id) && e.status == Status::Closed
         })
         .collect();
 
@@ -1199,7 +1195,9 @@ mod tests {
         };
 
         let result = build_agent_prompt(&bean, &options).unwrap();
-        assert!(result.system_prompt.contains("Concurrent Modification Warning"));
+        assert!(result
+            .system_prompt
+            .contains("Concurrent Modification Warning"));
         assert!(result.system_prompt.contains("Bean 2 (Other)"));
     }
 

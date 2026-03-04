@@ -26,7 +26,10 @@ pub fn append_history(beans_dir: &Path, entry: &AgentHistoryEntry) {
     let _ = try_append(beans_dir, entry);
 }
 
-fn try_append(beans_dir: &Path, entry: &AgentHistoryEntry) -> Result<(), Box<dyn std::error::Error>> {
+fn try_append(
+    beans_dir: &Path,
+    entry: &AgentHistoryEntry,
+) -> Result<(), Box<dyn std::error::Error>> {
     let path = beans_dir.join("agent_history.jsonl");
     let line = serde_json::to_string(entry)?;
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
