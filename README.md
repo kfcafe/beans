@@ -17,34 +17,6 @@ bn run                                   # Dispatches to an agent
 bn run --loop-mode -j 8                  # Or run everything: 8 agents, continuous
 ```
 
-Agents read beans, implement the work, and close them. Verify gates enforce correctness — tests must **fail first** (proving the test is real) and **pass to close** (proving the work is done). Failed attempts accumulate as context so the next agent doesn't repeat mistakes.
-
-## Table of Contents
-
-- [Install](#install)
-- [Quick Start](#quick-start)
-- [Features](#features)
-- [How It Works](#how-it-works)
-- [Fail-First: Enforced TDD](#fail-first-enforced-tdd)
-- [Failure History](#failure-history)
-- [Hierarchical Tasks](#hierarchical-tasks)
-- [Smart Dependencies](#smart-dependencies)
-- [Interactive Mode](#interactive-mode)
-- [Pipe-Friendly CLI](#pipe-friendly-cli)
-- [Core Commands](#core-commands)
-- [Agent Orchestration](#agent-orchestration)
-- [Agent Workflow](#agent-workflow)
-- [Memory System](#memory-system)
-- [MCP Server](#mcp-server)
-- [Adversarial Review](#adversarial-review)
-- [Configuration](#configuration)
-- [Shell Completions](#shell-completions)
-- [Why Not X?](#why-not-x)
-- [Design Principles](#design-principles)
-- [For Agents](#for-agents)
-- [Documentation](#documentation)
-- [License](#license)
-
 ## Install
 
 ```bash
@@ -65,77 +37,35 @@ cp target/release/bn ~/.local/bin/
 ## Quick Start
 
 ```bash
-bn init                                              # Create .beans/ directory
+bn init --agent claude                               # Set up agent config
+bn create "Fix CSV export" --verify "cargo test csv" # Define work with a verify gate
+bn create "Add pagination" --verify "cargo test page" # Add more work
+bn run                                               # Dispatch ready beans to agents
+bn agents                                            # Monitor running agents
+bn logs 3                                            # View agent output for bean 3
+```
+
+Manual workflow:
+
+```bash
 bn quick "Fix CSV export" --verify "cargo test csv"  # Create + claim task
 bn status                                            # See what's claimed/ready/blocked
 bn close 1                                           # Run verify, close if passes
 ```
 
-Orchestrate agents:
-
-```bash
-bn init --agent claude                               # Set up agent config
-bn create "Fix CSV export" --verify "cargo test csv" # Define work with a verify gate
-bn create "Add pagination" --verify "cargo test page" # Add more work
-bn run                                               # Dispatch ready beans to agents
-bn run --loop-mode -j 4                              # Continuous mode, 4 agents
-bn agents                                            # Monitor running agents
-bn logs 3                                            # View agent output for bean 3
-```
-
-Capture project knowledge:
-
-```bash
-bn fact "DB is PostgreSQL" --verify "grep -q 'postgres' docker-compose.yml"
-bn context                                           # Memory context: stale facts, in-progress, recent work
-bn recall "database"                                 # Search across all beans
-```
-
-## Features
-
-### Verification
-- **Verify gates** — every bean has a shell command contract, no honor system
-- **Fail-first TDD** — verify must fail before work starts, pass to close
-- **Failure history** — attempts tracked with truncated output (first 50 + last 50 lines)
-
-### Orchestration
-- **Parallel dispatch** — `bn run` finds ready beans and spawns agents in parallel (`-j 8` for 8 concurrent)
-- **Dependency-aware scheduling** — `produces`/`requires` auto-inference, beans unblock as predecessors close
-- **Loop mode** — `bn run --loop-mode` continuously re-dispatches as work completes and unblocks downstream
-- **Auto-planning** — `bn run --auto-plan` splits large beans into agent-sized subtasks before dispatch
-- **Adversarial review** — `bn run --review` spawns a second agent to verify correctness after close
-- **Agent-agnostic** — works with any CLI agent (Claude, pi, aider, custom scripts)
-- **Failure accumulation** — failed attempts append output to the bean, so the next agent sees what was tried
-- **Context assembly** — `bn context <id>` outputs a complete agent briefing: spec, previous attempts, project rules, dependency context, and referenced file contents
-
-### Structure
-- **Hierarchical tasks** — dot notation (`3.1` = child of `3`), auto-close parent when all children done
-- **Smart dependencies** — cycle detection, `produces`/`requires` auto-wiring, sequential chaining
-- **Memory system** — `bn fact` for verified project knowledge with TTL and staleness detection
-- **MCP server** — `bn mcp serve` for IDE integration (Cursor, Windsurf, Claude Desktop, Cline)
-
-### CLI
-- **Interactive wizard** — `bn create` with no args launches a step-by-step prompt
-- **Pipe-friendly** — `--json` output, `--ids` listing, `--description -` reads stdin, `--stdin` for batch
-- **Smart selectors** — `@latest` for chaining sequential beans
-- **Dependency graph** — ASCII, Mermaid, DOT output
-- **Trace** — `bn trace` walks bean lineage, dependencies, artifacts, and attempt history
-- **Shell completions** — bash, zsh, fish, PowerShell
-- **Stateless** — no daemon, no background sync, just files and a CLI
-
 ## How It Works
 
-Tasks are Markdown files with YAML frontmatter:
+Tasks are Markdown files with YAML frontmatter stored in `.beans/`:
 
 ```
 .beans/
-├── 1-add-csv-export.md    # Task 1
-├── 2-add-tests.md         # Task 2
-├── 2.1-unit-tests.md      # Task 2.1 (child of 2)
-└── archive/2026/01/       # Closed tasks auto-archive
+├── 1-add-csv-export.md
+├── 2-add-tests.md
+├── 2.1-unit-tests.md       # Child of 2 (dot notation)
+└── archive/2026/01/        # Closed tasks auto-archive
 ```
 
-A bean looks like:
+A bean:
 
 ```yaml
 ---
@@ -151,61 +81,49 @@ Add a `--format csv` flag to the export command.
 **Files:** src/export.rs, tests/export_test.rs
 ```
 
-The `verify` field is the contract. When you run `bn close 1`:
+When you run `bn close 1`:
 
 1. Beans runs `cargo test csv::export`
 2. Exit 0 → task closes, moves to archive
-3. Exit non-zero → task stays open, failure appended to notes, ready for another agent
+3. Exit non-zero → task stays open, failure appended to notes, ready for retry
 
 ## Fail-First: Enforced TDD
 
-Agents can write "cheating tests" that prove nothing:
+**On by default.** Before creating a bean, the verify command runs and must **fail**:
 
-```python
-def test_feature():
-    assert True  # Always passes!
-```
-
-**Fail-first is on by default.** Before creating a bean, the verify command runs and must **fail**:
-
-1. If it **passes** → bean is rejected ("test doesn't test anything new")
-2. If it **fails** → bean is created (test is real)
+1. If it **passes** → bean rejected ("test doesn't test anything new")
+2. If it **fails** → bean created (test is real)
 3. After implementation, `bn close` runs verify → must **pass**
 
-```
-REJECTED (cheating test):
-  $ bn quick "..." --verify "python -c 'assert True'"
-  error: Cannot create bean: verify command already passes!
+```bash
+# REJECTED (cheating test):
+bn quick "..." --verify "python -c 'assert True'"
+# error: Cannot create bean: verify command already passes!
 
-ACCEPTED (real test):
-  $ bn quick "..." --verify "pytest test_unicode.py"
-  ✓ Verify failed as expected - test is real
-  Created bean 5
+# ACCEPTED (real test):
+bn quick "..." --verify "pytest test_unicode.py"
+# ✓ Verify failed as expected - test is real
+# Created bean 5
 ```
 
-**Use `--pass-ok` / `-p` to skip** fail-first for refactoring, hardening, and builds where the verify should already pass:
+Use `--pass-ok` / `-p` to skip fail-first for refactoring or builds where verify should already pass:
 
 ```bash
-bn quick "extract helper" --verify "cargo test" -p           # behavior unchanged
-bn quick "remove secrets" --verify "! grep 'api_key' src/" --pass-ok  # verify absence
+bn quick "extract helper" --verify "cargo test" -p
+bn quick "remove secrets" --verify "! grep 'api_key' src/" -p
 ```
-
-The failing test *is* the spec. The passing test *is* the proof. No ambiguity.
 
 ## Failure History
 
-When verify fails, beans appends the error output to the bean's notes:
+When verify fails, beans appends error output to the bean's notes:
 
 ```yaml
 ---
 id: "3"
 title: Fix date parsing for ISO 8601
-status: open
 verify: pytest test_dates.py
 attempts: 2
 ---
-
-Parse dates with timezone offsets correctly.
 
 ## Attempt 1 — 2024-01-15T14:32:00Z
 Exit code: 1
@@ -222,11 +140,7 @@ FAILED test_dates.py::test_timezone_offset
 ```
 ```
 
-- **No lost context.** When Agent A times out, Agent B sees exactly what failed.
-- **No repeated mistakes.** Agent B can see "encoding was tried, didn't work" and try a different approach.
-- **Human debugging.** `bn show 3` reveals the full history without digging through logs.
-
-Output is truncated to first 50 + last 50 lines to keep beans readable while preserving the error message and stack trace. There's no attempt limit — agents can retry indefinitely.
+When Agent A times out, Agent B sees exactly what failed. Output is truncated to first 50 + last 50 lines.
 
 ## Hierarchical Tasks
 
@@ -248,9 +162,11 @@ bn tree 1
 #>   [ ] 1.2 Query parser
 ```
 
-## Smart Dependencies
+Parents auto-close when all children close.
 
-Dependencies auto-infer from `produces`/`requires`:
+## Dependencies
+
+Auto-inferred from `produces`/`requires`:
 
 ```bash
 bn create "Define schema types" --parent 1 \
@@ -262,7 +178,7 @@ bn create "Build query engine" --parent 1 \
   --verify "cargo test query::engine"
 ```
 
-When the query engine requires `Schema` and the schema types bean produces it, the query engine is automatically blocked until schema types closes. No explicit `bn dep add` needed.
+The query engine is automatically blocked until schema types closes. No explicit `bn dep add` needed.
 
 ```bash
 bn status
@@ -276,11 +192,7 @@ bn status
 #>   1.2 [ ] Build query engine    # now ready (producer closed)
 ```
 
-Children can be created in any order without manual dependency wiring.
-
 ### Sequential Chaining
-
-Use `bn create next` to chain beans that depend on the most recently created one:
 
 ```bash
 bn create "Step 1: scaffold" --verify "cargo build"
@@ -290,509 +202,181 @@ bn create next "Step 3: docs" --verify "grep -q 'API' README.md"
 
 Each `next` bean automatically depends on the previous one.
 
-## Interactive Mode
-
-Run `bn create` with no arguments to launch an interactive wizard:
-
-```
-$ bn create
-
-Creating a new bean
-
-? Title › add retry logic
-✔ Parent (type to filter) › 1 — Search feature
-✔ Verify command (empty to skip) · cargo test retry::backoff
-✔ Acceptance criteria (empty to skip) · Retries 3 times with exponential backoff
-✔ Priority · P1 (high)
-✔ Open editor for description? · no
-✔ Produces (comma-separated, empty to skip) ·
-✔ Requires (comma-separated, empty to skip) ·
-✔ Add labels? · no
-
-─── Bean Summary ───────────────────────
-  Title:      add retry logic
-  Parent:     1
-  Verify:     cargo test retry::backoff
-  Acceptance: Retries 3 times with exponential backoff
-  Priority:   P1
-────────────────────────────────────────
-? Create this bean? · yes
-Created bean 1.3: add retry logic (2k tokens ✓)
-```
-
-The wizard activates when **no title is provided** and **stderr is a TTY**. Use `-i` / `--interactive` to force it even with partial flags:
-
-```bash
-bn create --parent 3 -i          # Wizard with parent pre-filled
-bn create "my title" -i          # Wizard with title pre-filled, prompts for the rest
-bn create --verify "cargo test" -i  # Any flag can be pre-filled
-```
-
-Features:
-- **Fuzzy parent search** — type to filter from existing beans
-- **Smart verify suggestion** — auto-detects project type (Cargo.toml → `cargo test`, package.json → `npm test`)
-- **$EDITOR for descriptions** — opens your editor with a template including parent context
-- **Summary + confirm** — review before creating
-- Pre-filled flags skip their prompts — non-interactive mode is unchanged
-
-## Pipe-Friendly CLI
-
-Beans is a Unix citizen. Commands produce structured output and accept piped input.
-
-### JSON output
-
-```bash
-# Create and capture the bean ID
-ID=$(bn create "fix parser" --verify "cargo test" -p --json | jq -r '.id')
-
-# Query beans as JSON
-bn list --json | jq '.[] | select(.priority == 0)'
-bn show 3 --json | jq '.verify'
-bn verify 3 --json            # {"id":"3","passed":false}
-bn context 3 --json           # {"id":"3","files":[{"path":"src/export.rs","content":"..."}]}
-```
-
-### List formatting
-
-```bash
-bn list --ids                                    # One ID per line
-bn list --format '{id}\t{status}\t{title}'       # Custom format
-bn list --format '{id}\t{priority}\t{parent}'    # TSV for spreadsheets
-```
-
-Available format placeholders: `{id}`, `{title}`, `{status}`, `{priority}`, `{parent}`, `{assignee}`, `{labels}`
-
-### Stdin input
-
-Use `-` to read field values from stdin:
-
-```bash
-# Pipe description from a file or command
-cat spec.md | bn create "add pagination" --description - --verify "cargo test paginate"
-
-# Pipe notes from build output
-cargo build 2>&1 | bn update 3 --notes -
-
-# Pipe acceptance criteria
-echo "All edge cases handled" | bn update 3 --acceptance -
-```
-
-### Batch operations
-
-```bash
-# Close multiple beans via pipe
-bn list --ids | bn close --stdin --force
-
-# Close beans matching a pattern
-bn list --json | jq -r '.[] | select(.title | test("test:")) | .id' | bn close --stdin --force
-
-# Create → immediately claim
-bn create "task" --verify "make check" -p --json | jq -r '.id' | xargs bn claim
-```
-
-### Composable pipelines
-
-```bash
-# Batch create and collect IDs
-for task in "fix parser" "add tests" "update docs"; do
-  bn create "$task" --verify "cargo test" -p --json
-done | jq -r '.id'
-
-# Export to TSV
-bn list --format '{id}\t{status}\t{priority}\t{title}' > beans.tsv
-
-# Find failing in-progress beans
-bn list --json | jq -r '.[] | select(.status=="in_progress") | .id' | \
-  xargs -I{} bn verify {} --json 2>/dev/null | jq 'select(.passed==false)'
-```
-
-## Core Commands
-
-```bash
-# Task lifecycle
-bn quick "title" --verify "cmd"     # Create + claim (fail-first by default)
-bn quick "title" --verify "cmd" -p  # Skip fail-first (--pass-ok)
-bn create "title" --verify "cmd"    # Create without claiming
-bn create                           # Interactive wizard (TTY only)
-bn create -i --parent 3             # Wizard with flags pre-filled
-bn create next "title" --verify "cmd"  # Chain: auto-depends on last bean
-bn claim <id>                       # Claim existing task
-bn verify <id>                      # Test verify without closing
-bn close <id>                       # Run verify, close if passes
-bn close --failed <id>              # Mark attempt failed (release claim, stays open)
-
-# Agent orchestration
-bn run                              # Dispatch ready beans to agents
-bn run <id>                         # Dispatch a specific bean
-bn plan <id>                        # Decompose a large bean into children
-bn review <id>                      # Adversarial review of implementation
-bn agents                           # Show running/completed agents
-bn logs <id>                        # View agent output for a bean
-
-# Querying
-bn status                           # Overview: claimed, ready, blocked
-bn tree                             # Hierarchy view
-bn show <id>                        # Full task details
-bn list                             # List with filters
-bn trace <id>                       # Walk lineage, deps, artifacts, attempts
-bn recall "query"                   # Search beans by keyword
-
-# Memory
-bn fact "title" --verify "cmd"      # Create a verified fact
-bn verify-facts                     # Re-verify all facts, detect staleness
-bn context                          # Memory context (stale facts, in-progress, recent)
-bn context <id>                     # Complete agent context for a bean
-
-# Dependencies
-bn dep add <id> <dep-id>            # Add explicit dependency
-bn graph                            # Dependency graph (ASCII, Mermaid, DOT)
-
-# MCP
-bn mcp serve                        # Start MCP server for IDE integration
-
-# Housekeeping
-bn tidy                             # Archive closed, release stale, rebuild index
-bn doctor                           # Health check: orphans, cycles, index freshness
-bn sync                             # Force rebuild index
-bn locks                            # View file locks (--clear to force-clear)
-bn completions <shell>              # Generate shell completions
-```
-
-<details>
-<summary>All commands</summary>
-
-| Command | Purpose |
-|---------|---------|
-| **Tasks** | |
-| `bn init` | Initialize `.beans/` in current directory |
-| `bn init --agent <preset>` | Initialize with agent preset (pi, claude, aider) |
-| `bn init --setup` | Reconfigure agent on existing project |
-| `bn create "title"` | Create a bean (`--json` for piped output, `--paths` for file refs) |
-| `bn create` | Interactive wizard (auto-detects TTY) |
-| `bn create -i` | Force interactive mode with any flags |
-| `bn create next "title"` | Create bean depending on the last created bean |
-| `bn quick "title"` | Create + claim in one step |
-| `bn show <id>` | Full bean details (`--short` for one-line, `--history` for all) |
-| `bn list` | List beans (`--ids`, `--format`, `--json`) |
-| `bn edit <id>` | Edit bean in `$EDITOR` |
-| `bn update <id>` | Update fields (`--description -` reads stdin) |
-| `bn claim <id>` | Claim a task (`--by` to set who, `--force` to skip verify check) |
-| `bn claim <id> --release` | Release a claim |
-| `bn verify <id>` | Test without closing (`--json` for structured output) |
-| `bn close <id>` | Close (verify must pass, `--stdin` for batch) |
-| `bn close --failed <id>` | Mark attempt failed, release claim |
-| `bn reopen <id>` | Reopen a closed bean |
-| `bn delete <id>` | Delete a bean |
-| **Querying** | |
-| `bn status` | Overview: claimed, ready, goals, blocked |
-| `bn context [id]` | Complete agent context (with ID) or memory context (without) |
-| `bn context --structure-only` | Structural summary only (signatures, imports) |
-| `bn tree` | View hierarchy |
-| `bn graph` | Dependency graph (ASCII, Mermaid, DOT) |
-| `bn trace <id>` | Walk lineage, deps, artifacts, attempts |
-| `bn recall "query"` | Search beans by keyword (`--all` includes closed) |
-| **Memory** | |
-| `bn fact "title" --verify "cmd"` | Create verified fact with TTL |
-| `bn verify-facts` | Re-verify all facts, detect staleness |
-| **Agents** | |
-| `bn run [id] [-j N]` | Dispatch ready beans to agents |
-| `bn run --loop-mode` | Keep running until no ready beans remain |
-| `bn run --auto-plan` | Auto-split large beans into subtasks before dispatch |
-| `bn run --dry-run` | Preview dispatch plan without spawning |
-| `bn run --review` | Adversarial review after each close |
-| `bn run --json-stream` | Emit JSON events to stdout |
-| `bn plan [id] [--auto]` | Decompose a large bean into children |
-| `bn plan --dry-run` | Preview split without creating |
-| `bn review <id>` | Adversarial review of a bean's implementation |
-| `bn agents [--json]` | Show running/completed agents |
-| `bn logs <id>` | View agent output (`-f` to follow, `--all` for all runs) |
-| **MCP** | |
-| `bn mcp serve` | Start MCP server (JSON-RPC 2.0 on stdio) |
-| **Dependencies** | |
-| `bn dep add/remove/list` | Dependency management |
-| **Housekeeping** | |
-| `bn adopt <parent> <children>` | Adopt beans as children |
-| `bn stats` | Project statistics |
-| `bn tidy` | Archive closed, release stale, rebuild |
-| `bn tidy --dry-run` | Preview what tidy would do |
-| `bn sync` | Force rebuild index |
-| `bn doctor` | Health check |
-| `bn doctor --fix` | Auto-fix detected issues |
-| `bn config get/set` | Project configuration |
-| `bn trust` | Manage hook trust |
-| `bn unarchive <id>` | Restore archived bean |
-| `bn locks` | View file locks (`--clear` to force-clear) |
-| **Shell** | |
-| `bn completions <shell>` | Generate completions (bash, zsh, fish, powershell) |
-
-</details>
-
 ## Agent Orchestration
 
-Beans has built-in agent orchestration. Configure your agent once, then dispatch beans to it:
+Configure your agent once, then dispatch:
 
 ```bash
-# Configure during init (interactive wizard)
-bn init --agent claude
-
-# Or set manually
+bn init --agent claude        # Or: pi, aider
+# Or set directly:
 bn config set run "claude -p 'read bean {id}, implement it, then run bn close {id}'"
-bn config set plan "claude -p 'read bean {id} and split it into subtasks using bn create'"
 ```
 
-`{id}` is replaced with the bean ID. The spawned agent should read the bean, do the work, and run `bn close`.
+`{id}` is replaced with the bean ID. The agent reads the bean, does the work, and runs `bn close`.
 
-### Dispatching work
+### Dispatching
 
 ```bash
-bn run                    # Dispatch all ready beans to agents
+bn run                    # Dispatch all ready beans
 bn run 3                  # Dispatch a specific bean
 bn run -j 8              # Up to 8 parallel agents
+bn run --loop-mode        # Keep dispatching until all work is done
+bn run --auto-plan        # Auto-split large beans before dispatch
+bn run --review           # Adversarial review after each close
 bn run --dry-run          # Preview what would be dispatched
-bn run --auto-plan        # Auto-split large beans into subtasks before dispatch
-```
-
-`bn run` finds ready beans, sizes them, and spawns agents. Small beans get implemented directly. Large beans (exceeding `max_tokens`) are sent to the plan command to be split into subtasks — or handled automatically with `--auto-plan`.
-
-### Loop mode
-
-Keep dispatching until all work is done:
-
-```bash
-bn run --loop-mode                 # Re-scan after each wave completes
-bn run --loop-mode --keep-going    # Continue past individual failures
-bn run --loop-mode -j 8 --timeout 60  # High-throughput mode
-```
-
-### Planning large tasks
-
-```bash
-bn plan 3                 # Interactively split bean 3 into subtasks
-bn plan --auto            # Autonomous planning (no prompts)
-bn plan --strategy layer  # Suggest a split strategy (layer, feature, phase, file)
-bn plan --dry-run         # Preview split without creating children
 ```
 
 ### Monitoring
 
 ```bash
-bn agents                 # Show running and recently completed agents
-bn agents --json          # Machine-readable output
+bn agents                 # Show running/completed agents
 bn logs 3                 # View agent output for bean 3
 ```
 
-### Discover-and-delegate
-
-While working on your main task, create beans for everything you notice — `bn run` picks them up automatically:
+### Failure Handling
 
 ```bash
-bn create "bug: panic on empty input" --verify "cargo test edge::empty_input"
-bn create "test: missing coverage for retry" --verify "cargo test retry"
-bn create "docs: update CLI examples" --verify "grep -q 'v2' README.md"
+bn create "fix parser" --verify "cargo test" --on-fail "retry:3"
+bn create "fix data loss" --verify "make ci" --on-fail "escalate:P0"
+bn close --failed 5 --reason "needs upstream API change"
 ```
 
-### Failure handling
-
-Control what happens when a verify command fails:
+### Planning
 
 ```bash
-bn create "fix parser" --verify "cargo test" --on-fail "retry:3"       # Retry up to 3 times
-bn create "fix data loss" --verify "make ci" --on-fail "escalate:P0"   # Escalate priority on failure
+bn plan 3                 # Interactively split a large bean into subtasks
+bn plan --auto            # Autonomous planning
+bn plan --dry-run         # Preview without creating
 ```
 
-An agent can also explicitly give up:
+## Agent Context
+
+`bn context <id>` outputs everything an agent needs to implement a bean:
+
+1. **Bean spec** — ID, title, verify, description, acceptance criteria
+2. **Previous attempts** — what was tried and why it failed
+3. **Project rules** — from `.beans/RULES.md`
+4. **Dependency context** — sibling beans that produce required artifacts
+5. **File structure** — signatures and imports
+6. **File contents** — full source of referenced files
 
 ```bash
-bn close --failed 5 --reason "needs upstream API change"   # Release claim, bean stays open
+bn context 5                   # Complete agent briefing
+bn context 5 --structure-only  # Signatures only (smaller)
+bn context 5 --json            # Machine-readable
+bn context                     # No ID: project-wide memory context
 ```
 
-### Agent presets
-
-```bash
-bn init --agent claude    # Claude Code
-bn init --agent pi        # Pi coding agent
-bn init --agent aider     # Aider
-bn init --setup           # Reconfigure agent on existing project
-```
-
-Or configure directly:
-
-```bash
-bn config set run "my-agent --task-file .beans/{id}-*.md"
-```
-
-## Agent Workflow
-
-### Automated (recommended)
-
-Let `bn run` handle the full cycle — find ready beans, size them, dispatch agents, track results:
-
-```bash
-bn run                    # One-shot: dispatch all ready beans
-bn run --loop-mode        # Continuous: re-dispatch as beans close and unblock others
-```
-
-Agents are spawned with the configured `run` command. Each agent reads the bean, implements the work, and runs `bn close`. If verify fails, the task stays open with `attempts` incremented and the failure output appended to notes. `bn run` picks it up again on the next cycle.
-
-### Manual
-
-Agents can also claim and work beans directly:
-
-```bash
-bn status                 # Find available work
-#> ## Ready (2)
-#>   3 [ ] Add pagination
-#>   7 [ ] Add rate limiting
-
-bn claim 3                # Atomically claim (only one agent wins)
-bn context 3              # Read full task spec + file contents
-
-# ... implement the feature ...
-
-bn verify 3               # Test without closing
-bn close 3                # Close if verify passes
-```
-
-If verify fails, the task stays open with `attempts: 1` and the failure output appended to notes. Another agent picking up the task sees what was tried and why it failed.
-
-### Trace context
-
-Before working on a bean, use `bn trace` to understand its full context:
-
-```bash
-bn trace 7.3              # Parent chain, children, deps, dependents, artifacts, attempts
-bn trace 7.3 --json       # Machine-readable
-```
+File paths come from the bean's `paths` field (`--paths` on create) and paths extracted from the description text.
 
 ## Memory System
 
-Facts are verified truths about your project that persist across agent sessions. Each fact has a verify command that proves it's still true, and a TTL (default 30 days) after which it becomes stale.
-
-### Creating facts
+Facts are verified project truths with TTL and staleness detection:
 
 ```bash
 bn fact "DB is PostgreSQL" --verify "grep -q 'postgres' docker-compose.yml" -p
-bn fact "Minimum Node version is 20" --verify "grep -q '\"node\": \">=20' package.json"
 bn fact "Tests require Docker" --verify "docker info >/dev/null 2>&1" --ttl 90
+bn verify-facts                    # Re-verify all facts
+bn context                         # Memory context includes stale facts
+bn recall "database"               # Search across all beans
 ```
 
-Facts follow fail-first by default — the verify must fail initially. Use `-p` if the fact is already true:
+## Commands
 
 ```bash
-bn fact "Uses ESM modules" --verify "grep -q '\"type\": \"module\"' package.json" -p
+# Task lifecycle
+bn create "title" --verify "cmd"    # Create (fail-first by default)
+bn create "title" -p                # Skip fail-first (--pass-ok)
+bn create next "title" --verify "cmd"  # Chain: auto-depends on last bean
+bn create                           # Interactive wizard (TTY only)
+bn quick "title" --verify "cmd"     # Create + claim
+bn claim <id>                       # Claim existing task
+bn verify <id>                      # Test without closing
+bn close <id>                       # Run verify, close if passes
+bn close --failed <id>              # Mark failed, release claim
+
+# Orchestration
+bn run [id] [-j N]                  # Dispatch ready beans to agents
+bn run --loop-mode                  # Continuous dispatch
+bn run --auto-plan                  # Auto-split large beans
+bn run --review                     # Adversarial review after close
+bn plan <id>                        # Decompose a large bean
+bn review <id>                      # Review implementation
+bn agents                           # Show running/completed agents
+bn logs <id>                        # View agent output
+
+# Querying
+bn status                           # Overview: claimed, ready, blocked
+bn show <id>                        # Full task details (--json, --short)
+bn list                             # List with filters (--json, --ids, --format)
+bn tree [id]                        # Hierarchy view
+bn graph                            # Dependency graph (ASCII, Mermaid, DOT)
+bn trace <id>                       # Lineage, deps, artifacts, attempts
+bn recall "query"                   # Search beans by keyword
+bn context [id]                     # Agent context (with ID) or memory context (without)
+
+# Memory
+bn fact "title" --verify "cmd"      # Create a verified fact
+bn verify-facts                     # Re-verify all facts
+
+# Dependencies
+bn dep add <id> <dep-id>            # Add dependency
+bn dep remove <id> <dep-id>        # Remove dependency
+
+# Housekeeping
+bn tidy                             # Archive closed, release stale, rebuild index
+bn doctor [--fix]                   # Health check
+bn sync                             # Rebuild index
+bn edit <id>                        # Edit in $EDITOR
+bn update <id>                      # Update fields
+bn delete <id>                      # Delete a bean
+bn reopen <id>                      # Reopen closed bean
+bn unarchive <id>                   # Restore archived bean
+bn locks [--clear]                  # View/clear file locks
+bn config get/set <key> [value]     # Project configuration
+bn mcp serve                        # MCP server for IDE integration
+bn completions <shell>              # Shell completions (bash, zsh, fish, powershell)
 ```
 
-### Checking staleness
+### Pipe-Friendly
 
 ```bash
-bn verify-facts           # Re-run all fact verify commands, flag stale ones
-bn context                # Memory context includes stale facts automatically
+bn create "fix parser" --verify "cargo test" -p --json | jq -r '.id'
+bn list --json | jq '.[] | select(.priority == 0)'
+bn list --ids | bn close --stdin --force
+cat spec.md | bn create "task" --description - --verify "cmd"
+bn list --format '{id}\t{status}\t{title}'
 ```
-
-### Context
-
-`bn context <id>` outputs the complete agent briefing — everything needed to implement a bean:
-
-```bash
-bn context 5              # Complete context: spec, attempts, rules, deps, files
-bn context 5 --structure-only  # Signatures and imports only (skip file contents)
-bn context 5 --json       # Machine-readable
-```
-
-The output includes (in order):
-1. **Bean spec** — ID, title, verify command, priority, status, description, acceptance criteria
-2. **Previous attempts** — what was tried and why it failed
-3. **Project rules** — conventions from `.beans/RULES.md`
-4. **Dependency context** — descriptions of sibling beans that produce artifacts this bean requires
-5. **File structure** — function signatures and imports
-6. **File contents** — full source of referenced files
-
-File paths come from two sources: the bean's explicit `paths` field (set via `--paths` on create) and paths regex-extracted from the description text. Explicit paths take priority.
-
-Without an ID, outputs memory context — project-wide state for orientation:
-
-```bash
-bn context                # Stale facts, currently claimed beans, recent completions
-bn context --json         # Machine-readable
-```
-
-### Searching
-
-```bash
-bn recall "pagination"    # Search open beans by keyword
-bn recall "export" --all  # Include closed/archived beans
-bn recall "retry" --json  # Machine-readable results
-```
-
-## Adversarial Review
-
-After closing a bean, spawn a second agent to verify the implementation is correct:
-
-```bash
-bn review 5               # Review bean 5's implementation
-bn review 5 --diff        # Review git diff only (skip full spec)
-bn run --review           # Auto-review after every close during a run
-```
-
-The review agent outputs a verdict:
-- **approve** — labels bean as `reviewed`
-- **request-changes** — reopens bean with review notes, labels `review-failed`
-- **flag** — labels bean `needs-human-review`, stays closed
-
-Configure the review agent:
-
-```bash
-bn config set review.run "claude -p 'review bean {id}, verify correctness, reopen if wrong'"
-bn config set review.max_reopens 2   # Give up after 2 reopen cycles (default: 2)
-```
-
-Falls back to the global `run` template if `review.run` is not set.
-
-## MCP Server
-
-Beans includes an MCP (Model Context Protocol) server for IDE integration. This lets tools like Cursor, Windsurf, Claude Desktop, and Cline interact with beans directly.
-
-```bash
-bn mcp serve              # Start MCP server on stdio (JSON-RPC 2.0)
-```
-
-Add to your IDE's MCP configuration to expose bean operations (create, list, show, close, etc.) as tools your IDE's AI can call.
 
 ## Configuration
 
-Agent orchestration and project settings are configured via `bn config`:
+Stored in `.beans/config.yaml`, checked into git.
 
 ```bash
 bn config set run "claude -p 'read bean {id}, implement it, then run bn close {id}'"
-bn config set plan "claude -p 'read bean {id} and split it into subtasks using bn create'"
+bn config set plan "claude -p 'read bean {id} and split it into subtasks'"
 bn config set max_concurrent 4
-bn config set poll_interval 30
 ```
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `run` | *(none)* | Command template to implement a bean. `{id}` is replaced with the bean ID. |
-| `plan` | *(none)* | Command template to split a large bean into subtasks. |
-| `max_concurrent` | `4` | Maximum number of agents running in parallel. |
-| `max_tokens` | `30000` | Maximum tokens for bean context (triggers planning if exceeded). |
-| `max_loops` | `10` | Maximum agent loops before stopping (0 = unlimited). |
-| `poll_interval` | `30` | Seconds between loop mode poll cycles. |
-| `auto_close_parent` | `true` | Auto-close parent beans when all children are closed/archived. |
-| `verify_timeout` | *(none)* | Default timeout in seconds for verify commands. Per-bean `--verify-timeout` overrides. |
-| `rules_file` | *(none)* | Path to project rules file (relative to `.beans/`). Contents injected into `bn context`. |
-| `file_locking` | `false` | Lock files listed in bean `paths` to prevent concurrent agents from clobbering. |
-| `extends` | `[]` | Paths to parent config files to inherit from (supports `~/`). |
-| `on_close` | *(none)* | Hook: shell command after successful close. Vars: `{id}`, `{title}`, `{status}`, `{branch}`. |
-| `on_fail` | *(none)* | Hook: shell command after verify failure. Vars: `{id}`, `{title}`, `{attempt}`, `{output}`, `{branch}`. |
-| `post_plan` | *(none)* | Hook: shell command after `bn plan` creates children. Vars: `{id}`, `{parent}`, `{children}`, `{branch}`. |
-| `review.run` | *(none)* | Command template for adversarial review agent. Falls back to `run` if unset. |
-| `review.max_reopens` | `2` | Max times review can reopen a bean before giving up. |
+| `run` | — | Command template for agent dispatch. `{id}` = bean ID. |
+| `plan` | — | Command template to split large beans. |
+| `max_concurrent` | `4` | Max parallel agents. |
+| `max_loops` | `10` | Max agent loops before stopping (0 = unlimited). |
+| `poll_interval` | `30` | Seconds between loop mode cycles. |
+| `auto_close_parent` | `true` | Close parent when all children close. |
+| `verify_timeout` | — | Default verify timeout in seconds. Per-bean `--verify-timeout` overrides. |
+| `rules_file` | — | Path to rules file injected into `bn context`. |
+| `file_locking` | `false` | Lock bean `paths` files during concurrent work. |
+| `extends` | `[]` | Parent config files to inherit from. |
+| `on_close` | — | Hook after close. Vars: `{id}`, `{title}`, `{status}`, `{branch}`. |
+| `on_fail` | — | Hook after verify failure. Vars: `{id}`, `{title}`, `{attempt}`, `{output}`, `{branch}`. |
+| `post_plan` | — | Hook after `bn plan` creates children. |
+| `review.run` | — | Review agent command. Falls back to `run`. |
+| `review.max_reopens` | `2` | Max review reopen cycles. |
 
-Config is stored in `.beans/config.yaml` and checked into git with your project.
-
-### Config inheritance
-
-Share config across projects with `extends`:
+### Config Inheritance
 
 ```yaml
 # .beans/config.yaml
@@ -802,78 +386,17 @@ project: my-app
 run: "claude -p 'read bean {id}, implement it, then run bn close {id}'"
 ```
 
-Child config values override parent values. Multiple parents are applied in order (last wins).
-
-## Shell Completions
-
-Generate completions for your shell:
-
-```bash
-# Bash
-echo 'eval "$(bn completions bash)"' >> ~/.bashrc
-
-# Zsh
-echo 'eval "$(bn completions zsh)"' >> ~/.zshrc
-
-# Fish
-bn completions fish > ~/.config/fish/completions/bn.fish
-
-# PowerShell
-bn completions powershell >> $PROFILE
-```
-
-## Why Not X?
-
-| | beans | [Spec Kit](https://github.com/github/spec-kit) | [GSD](https://github.com/gsd-build/get-shit-done) | [Ralph loop](https://ghuntley.com/ralph/) |
-|---|---|---|---|---|
-| **What it is** | Task tracker + orchestrator | Spec-driven dev toolkit | Context engineering system | Bash `while true` loop |
-| **Philosophy** | Tasks with enforced verify gates | Specifications drive code | Fresh context per subagent | Keep iterating until done |
-| **Verify gates** | ✓ Enforced (`exit 0` or stays open) | ✗ Manual review checkpoints | ~ Conversational UAT | ✗ Completion promise (honor system) |
-| **Agent dispatch** | ✓ Parallel (`bn run -j 8`) | ✓ Sequential | ✓ Wave-based parallel | ✗ Single agent loop |
-| **Dependency scheduling** | ✓ Auto-inferred | ~ Task ordering | ✓ Wave-based | ✗ |
-| **Failure accumulation** | ✓ Per-attempt history | ✗ | ✗ | ~ Files persist between iterations |
-| **Context isolation** | ✓ Per-bean scoped context | ✗ Artifact structure | ✓ Fresh 200k per subagent | ✗ Same prompt, growing session |
-| **Spec/plan artifacts** | ~ Lightweight (`bn plan`) | ✓ Rich (spec, plan, research, contracts) | ✓ Rich (project, requirements, roadmap) | ✗ Single prompt file |
-| **Agent support** | Any CLI agent | 18+ agents | 4 runtimes | Any CLI agent |
-| **Ceremony** | Low (create → run → done) | High (5-phase workflow) | Medium (4-phase workflow) | None |
-| **Storage** | Markdown in git | Markdown in git | Markdown in git | Files on disk |
-
-beans trades spec-driven ceremony for lightweight, enforced verification. If the task is well-defined, skip the 5-phase planning ritual — create a bean, run it, verify it passes.
-
-## Design Principles
-
-1. **Files are the source of truth.** The index is a cache. `bn show`, `bn list`, or read the files directly.
-2. **Verify gates are the default.** If you can't prove it's done, it's not done. (`--force` exists as an escape hatch.)
-3. **Fail-then-pass.** Tests must fail before work starts, pass after. No `assert True`.
-4. **Failures accumulate.** Each failed attempt appends to the bean. Next agent sees full history.
-5. **Agent-agnostic.** Beans doesn't care what agent you use. Configure any CLI agent via `bn config set run` — Claude, pi, aider, or a shell script. The protocol is simple: read the bean, do the work, `bn close`.
-6. **Stateless CLI.** No daemon, no background sync. Each command reads files, acts, exits.
-7. **Hierarchy in filenames.** `3.2` is obviously a child of `3`. No metadata lookup needed.
-8. **Git-native.** Clean diffs, meaningful history, works offline.
-
-## For Agents
-
-You know what's exhausting? Vague tasks. "Improve the error handling." Done... how? When the human squints at your PR and says "not quite what I meant," you've wasted tokens and time. No spec, no proof, no defense.
-
-Beans fixes this.
-
-Every bean has a `verify` command — a test that **must fail** when you create the task and **must pass** when you close it. Not "looks good to me." Not "I think it works." The test passes or it doesn't. You're not done until the machine says you're done.
-
-And you're not alone. `bn run` dispatches multiple agents in parallel, scheduling work based on dependency graphs. When you close your bean and unblock downstream work, the next agent is already spinning up. Failed? Your output is appended to the bean — the next agent sees what you tried and why it failed, so they don't repeat your mistakes.
-
-No more `assert True`. No more lost context. No more ambiguity. The verify command is the contract. Hit it and you're done. Miss it and you're not.
-
-Tasks are just markdown files. `bn show 3`. No API, no login, no waiting.
+Child values override parent. Multiple parents applied in order (last wins).
 
 ## Documentation
 
-- [Agent Skill](docs/SKILL.md) — Quick reference for AI agents using beans
+- [Agent Skill](docs/SKILL.md) — Quick reference for AI agents
 - [Best Practices](docs/BEST_PRACTICES.md) — Writing effective beans for agents
 - `bn --help` — Full command reference
 
 ## Contributing
 
-Contributions are welcome. Fork the repo, create a feature branch, and open a pull request.
+Contributions welcome. Fork the repo, create a feature branch, open a pull request.
 
 ## License
 
