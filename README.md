@@ -7,9 +7,9 @@
 
 Task tracker for AI coding agents.
 
-Markdown tasks with verify gates, dependency-aware scheduling, and built-in agent orchestration. Every task has a shell command that must pass to close — no honor system. `bn run` dispatches work to agents automatically, tracks failures, and re-dispatches as dependencies resolve.
+Markdown tasks with verify gates, dependency-aware scheduling, and built-in agent orchestration. Every task has a shell command that must pass to close. `bn run` dispatches work to agents automatically, tracks failures, and re-dispatches as dependencies resolve.
 
-Plain markdown files. No SDK, no API — any agent that can read files and run shell commands already speaks beans.
+Plain markdown files. Any agent that can read files and run shell commands is fluent in beans.
 
 ```bash
 bn create "Add CSV export" --verify "cargo test csv::export"
