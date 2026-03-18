@@ -100,6 +100,11 @@ fn auto_close_parent(beans_dir: &Path, parent_id: &str) -> Result<()> {
         return Ok(());
     }
 
+    // Feature beans are never auto-closed — they require human review
+    if bean.feature {
+        return Ok(());
+    }
+
     let now = Utc::now();
 
     // Close the parent (skip verify - children already verified)
@@ -534,6 +539,29 @@ pub fn cmd_close(
                     eprintln!("Resolve conflicts and run `bn close {}` again", id);
                     return Ok(()); // Don't archive yet
                 }
+            }
+        }
+
+        // Feature beans require human confirmation via TTY
+        if bean.feature {
+            use std::io::IsTerminal;
+            if !std::io::stdin().is_terminal() {
+                println!(
+                    "Feature \"{}\" requires human review to close.",
+                    bean.title
+                );
+                continue; // Skip this bean, exit 0 (not an error)
+            }
+            // TTY available — ask for confirmation
+            eprintln!(
+                "Feature: \"{}\" — mark as complete? [y/N] ",
+                bean.title
+            );
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input).unwrap_or(0);
+            if !input.trim().eq_ignore_ascii_case("y") {
+                println!("Skipped feature \"{}\"", bean.title);
+                continue;
             }
         }
 
