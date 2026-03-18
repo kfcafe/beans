@@ -17,6 +17,21 @@ bn run                                   # Dispatches to an agent
 bn run --loop-mode -j 8                  # Or run everything: 8 agents, continuous
 ```
 
+## Contents
+
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [How It Works](#how-it-works)
+- [Fail-First: Enforced TDD](#fail-first-enforced-tdd)
+- [Failure History](#failure-history)
+- [Hierarchical Tasks](#hierarchical-tasks)
+- [Dependencies](#dependencies)
+- [Agent Orchestration](#agent-orchestration)
+- [Agent Context](#agent-context)
+- [Memory System](#memory-system)
+- [Commands](#commands)
+- [Configuration](#configuration)
+
 ## Install
 
 ```bash
